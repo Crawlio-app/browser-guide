@@ -844,6 +844,9 @@ function BrowserGuideApp(): React.ReactElement {
                   </button>
                 ))}
               </div>
+              <p className="brand-line">
+                <a href="https://www.crawlio.app" target="_blank" rel="noreferrer">by Crawlio</a>
+              </p>
             </div>
           )}
           {entries.map((entry) => (

@@ -426,6 +426,21 @@ button:disabled {
   background: var(--emerald);
 }
 
+.wizard-brand {
+  margin: 10px 0 0;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.wizard-brand a {
+  color: var(--emerald-dark);
+  text-decoration: none;
+}
+
+.wizard-brand a:hover {
+  text-decoration: underline;
+}
+
 @media (max-width: 520px) {
   .wizard-finish {
     flex-direction: column;

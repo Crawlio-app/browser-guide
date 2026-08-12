@@ -237,6 +237,8 @@ npm run install:helper`}</code>
         </span>
         <span>
           <a href="https://github.com/Crawlio-app/browser-guide">Open source</a>
+          {" · "}
+          <a href="/privacy">Privacy</a>
           {" · by "}
           <a href="https://www.crawlio.app">Crawlio</a>
           {" · macOS 13+ · Chrome 116+"}
