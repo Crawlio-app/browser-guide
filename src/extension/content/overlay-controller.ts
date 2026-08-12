@@ -377,11 +377,11 @@ function buildCompassMascot(): SVGSVGElement {
   ring.setAttribute("cy", "13");
   ring.setAttribute("r", "8.6");
   ring.setAttribute("fill", "#ffffff");
-  ring.setAttribute("stroke", "#2f8f6f");
+  ring.setAttribute("stroke", "#5B9EFF");
   ring.setAttribute("stroke-width", "1.6");
   const needle = document.createElementNS(SVG_NS, "path");
   needle.setAttribute("d", "M12 1.6 L13.8 5.4 L10.2 5.4 Z");
-  needle.setAttribute("fill", "#2f8f6f");
+  needle.setAttribute("fill", "#5B9EFF");
   const leftEye = document.createElementNS(SVG_NS, "circle");
   leftEye.setAttribute("class", "guide-mascot-eye");
   leftEye.setAttribute("cx", "9.3");

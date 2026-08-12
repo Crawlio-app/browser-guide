@@ -22,12 +22,12 @@
 
 .guide-spotlight {
   position: fixed;
-  border: 2px solid #2f8f6f;
+  border: 2px solid #5B9EFF;
   border-radius: 10px;
-  background: rgba(47, 143, 111, .06);
+  background: rgba(91, 158, 255, .07);
   box-shadow:
     0 0 0 3px rgba(255, 255, 255, .94),
-    0 0 0 4px rgba(47, 143, 111, .2),
+    0 0 0 4px rgba(91, 158, 255, .22),
     0 8px 26px rgba(22, 33, 27, .12);
   transform-origin: center;
 }
@@ -43,7 +43,7 @@
   border: 4px solid #fff;
   border-radius: 50%;
   transform: translate(-50%, -50%);
-  background: #2f8f6f;
+  background: #5B9EFF;
   box-shadow: 0 3px 12px rgba(23, 39, 31, .26);
   animation: guide-breathe 1.8s ease-in-out infinite;
 }
@@ -111,7 +111,7 @@
   display: inline-block;
   margin-right: 7px;
   border-radius: 50%;
-  background: #2f8f6f;
+  background: #5B9EFF;
   vertical-align: 1px;
 }
 
@@ -165,14 +165,14 @@
   padding: 6px 12px;
   border: 0;
   border-radius: 9px;
-  background: #17644e;
+  background: #3E7EDB;
   color: #fff;
   cursor: pointer;
   font: 650 11px/1 ui-sans-serif, system-ui, sans-serif;
 }
 
 .guide-next:hover {
-  background: #2f8f6f;
+  background: #5B9EFF;
 }
 
 /* The take-me-there arrow: pressing it scrolls the target into view. Like the
@@ -191,7 +191,7 @@
 }
 
 .guide-direction:hover {
-  border-color: #2f8f6f;
+  border-color: #5B9EFF;
 }
 
 .guide-direction::before {
@@ -201,8 +201,8 @@
   top: 14px;
   width: 12px;
   height: 12px;
-  border-top: 2px solid #2f8f6f;
-  border-right: 2px solid #2f8f6f;
+  border-top: 2px solid #5B9EFF;
+  border-right: 2px solid #5B9EFF;
   transform: rotate(45deg);
 }
 
