@@ -97,8 +97,10 @@ public struct NativeHostInstaller {
                     withIntermediateDirectories: true
                 )
                 try manifest.write(to: manifestURL, options: [.atomic])
+                // 0o644 matches every other native-messaging manifest Chrome
+                // reads on macOS; the file holds no secrets, only paths.
                 try fileManager.setAttributes(
-                    [.posixPermissions: NSNumber(value: Int16(0o600))],
+                    [.posixPermissions: NSNumber(value: Int16(0o644))],
                     ofItemAtPath: manifestURL.path
                 )
             }
