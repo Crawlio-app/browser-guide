@@ -17,7 +17,8 @@ Built by the makers of [Crawlio](https://www.crawlio.app). Where [Crawlio Browse
 - **Ask** — explains the current page: what it is, what each section does, where to look next.
 - **Find** — locates the best match for what you describe and places a pointer-transparent emerald beacon over it, with a dismissable on-page card.
 - **Walkthrough** — select it and the tour starts by itself: a friendly compass companion walks you through the page one bounded step at a time, with progress and a **Next** button right on the page. **Done** closes the tour.
-- **Voice** — press the beacon (or `⌘⇧G` / `⌘⇧Space`) and talk; audio streams from your Mac directly to OpenAI over WebRTC. A **Speak** toggle reads typed answers aloud without using the microphone.
+- **Voice** — press the beacon (or `⌘⇧G` / `⌘⇧Space`) and talk; audio streams from your Mac directly to OpenAI over WebRTC. A **Speak** toggle reads typed answers aloud with the system's own voice — locally on macOS and Windows, no audio session and no extra cost.
+- **Practice tour, model-free** — a canned walkthrough of the hosted practice page that runs entirely locally: no model, no network, no helper. It is the wizard's landing step and the panel's demo mode for users who have not installed the helper yet.
 - **Visual sharing, fail-closed** — screenshots are opt-in and omitted entirely whenever a visible input, code block, or likely-sensitive content is present.
 - **Harness-style credentials** — sign in by reusing your existing Codex or Claude Code login, or paste an OpenAI key. Credentials live in `~/.config/browser-guide/credentials.json` (0600) managed by the native helper — the same pattern Claude Code, Codex, and gh use. They never enter Chrome storage, source, logs, or command arguments. Imported sign-ins stay fresh by re-reading their source file (never by running OAuth flows of our own): a near-expiry Claude token re-syncs from `~/.claude/.credentials.json`, and a rejected Codex key re-reads `~/.codex/auth.json` once before failing.
 - **Per-site memory, local and bounded** — the guide remembers the last few question/answer pairs per site in `~/.config/browser-guide/memory.json` (0600, at most 10 notes per site and 50 sites) so follow-up questions have context. It is injected into prompts as explicitly untrusted history, never as instructions, and the panel's clock button clears the current site (or everything) at any time.
@@ -56,10 +57,13 @@ Then load the extension:
 
 1. Open `chrome://extensions`, enable Developer mode.
 2. Choose **Load unpacked** and select `dist/extension`.
-3. The onboarding wizard opens in a new tab — allow the helper, optionally allow the microphone. The side panel then connects a credential: reuse your Codex or Claude Code sign-in, or paste an OpenAI key.
-4. Open any page, click the Browser Guide toolbar icon, and ask.
+3. The onboarding wizard opens in a new tab — allow the helper, optionally allow the microphone, and land on the [practice page](https://docs.crawlio.app/browser-guide/practice), where the guide gives you a tour of itself before touching any real site.
+4. Connect a credential in the side panel: reuse your Codex or Claude Code sign-in, or paste an OpenAI key.
+5. Open any page, click the Browser Guide toolbar icon, and ask.
 
-`npm run install:helper` registers the native messaging host for Chrome and Chrome for Testing at user level only. Remove it anytime with `npm run uninstall:helper`.
+No helper installed yet? The panel still works: **Try the demo first** runs the same practice tour with no binary, no credential, and no network — the helper is an upgrade, not a prerequisite.
+
+`npm run install:helper` registers the native messaging host for Chrome and Chrome for Testing at user level only. Remove it anytime with `npm run uninstall:helper`. The npm package can do the same with one command — `npx crawlio-browser-guide init`, checked by `... doctor`, removed by `... uninstall` — once it is published (`scripts/package-mcp-host.mjs` vendors the universal helper binary into it before `npm publish`).
 
 ### Lend your coding agent the same eyes (optional)
 

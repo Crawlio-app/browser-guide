@@ -10,6 +10,7 @@
   "files": [
     "bin",
     "src",
+    "vendor",
     "README.md"
   ],
   "engines": {
@@ -31,6 +32,7 @@
     "@modelcontextprotocol/sdk": "^1.25.0"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "node -e \"import('./src/host-install.js').then(({isMachO, sha256, vendorMetadata}) => { const path = new URL('./vendor/macos/com.crawlio.browser_guide', import.meta.url).pathname; const meta = vendorMetadata(); if (!isMachO(path)) throw new Error('vendor host binary missing or invalid — run node ../scripts/package-mcp-host.mjs'); if (!meta || sha256(path) !== meta.sha256) throw new Error('vendor metadata is stale — rerun node ../scripts/package-mcp-host.mjs'); })\""
   }
 }

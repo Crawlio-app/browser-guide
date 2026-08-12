@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Browser Guide Practice — Aurora Billing</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, sans-serif; color: #17202a; background: #f4f7fb; }
+      header { padding: 24px 40px; background: #151b2d; color: white; }
+      nav { display: flex; gap: 16px; margin-top: 14px; }
+      nav a { color: #b7ffe9; }
+      main { max-width: 900px; margin: 30px auto; padding: 0 24px 900px; }
+      section { margin: 24px 0; padding: 24px; border-radius: 18px; background: white; box-shadow: 0 12px 35px rgba(40,55,80,.08); }
+      button, input { padding: 10px 14px; }
+      table { width: 100%; border-collapse: collapse; }
+      td, th { padding: 8px 10px; text-align: left; border-bottom: 1px solid #e6ebf2; }
+      .offscreen { margin-top: 700px; }
+    </style>
+    <script>
+      window.__guideCounters = {
+        click: 0,
+        input: 0,
+        key: 0,
+        submit: 0,
+        scroll: 0,
+        focus: 0,
+        history: 0,
+        location: 0
+      };
+      window.__guideInitialHref = location.href;
+      // Events on Browser Guide's own overlay UI retarget to its host element.
+      // Those are the user pressing extension controls, not page interference.
+      function fromBrowserGuide(event) {
+        var target = event.target;
+        return Boolean(target && target.closest && target.closest("[data-browser-guide-root]"));
+      }
+      addEventListener("click", function (event) { if (!fromBrowserGuide(event)) window.__guideCounters.click += 1; }, true);
+      addEventListener("input", function () { window.__guideCounters.input += 1; }, true);
+      addEventListener("keydown", function (event) {
+        if (!event.isTrusted) window.__guideCounters.key += 1;
+      }, true);
+      addEventListener("submit", function () { window.__guideCounters.submit += 1; }, true);
+      addEventListener("scroll", function () { window.__guideCounters.scroll += 1; }, true);
+      addEventListener("focusin", function (event) { if (!fromBrowserGuide(event)) window.__guideCounters.focus += 1; }, true);
+      addEventListener("hashchange", function () { window.__guideCounters.location += 1; }, true);
+      addEventListener("popstate", function () { window.__guideCounters.location += 1; }, true);
+      var originalPushState = history.pushState.bind(history);
+      var originalReplaceState = history.replaceState.bind(history);
+      history.pushState = function () {
+        window.__guideCounters.history += 1;
+        return originalPushState.apply(history, arguments);
+      };
+      history.replaceState = function () {
+        window.__guideCounters.history += 1;
+        return originalReplaceState.apply(history, arguments);
+      };
+    </script>
+  </head>
+  <body>
+    <section aria-label="Browser Guide practice page">
+      <header>
+        <strong>Aurora Billing</strong>
+        <nav aria-label="Practice navigation">
+          <a href="#overview">Overview</a>
+          <a href="#invoices">Invoices</a>
+          <a href="#settings">Settings</a>
+        </nav>
+      </header>
+      <main>
+        <h1>Welcome to the practice space</h1>
+        <p>This page is a safe, inert playground. Nothing here is real — try the tour.</p>
+        <section aria-label="Invoice search">
+          <h2>Search</h2>
+          <input type="search" aria-label="Search invoices" placeholder="Search invoices">
+        </section>
+        <section aria-label="Invoices" id="invoices">
+          <h2>Invoices</h2>
+          <table>
+            <thead><tr><th>Invoice</th><th>Amount</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>INV-2041</td><td>$120.00</td><td>Paid</td></tr>
+              <tr><td>INV-2042</td><td>$84.50</td><td>Due</td></tr>
+              <tr><td>INV-2043</td><td>$310.00</td><td>Draft</td></tr>
+            </tbody>
+          </table>
+          <button type="button" aria-label="Review invoices">Review invoices</button>
+        </section>
+        <section class="offscreen" aria-label="Statements">
+          <h2>Statements</h2>
+          <button type="button" aria-label="Download yearly statement">Download yearly statement</button>
+        </section>
+        <section aria-label="Keep going">
+          <h2>Keep going</h2>
+          <a href="https://docs.crawlio.app/browser-guide/overview" aria-label="Read the full guide">Read the full guide</a>
+        </section>
+      </main>
+    </section>
+  </body>
+</html>

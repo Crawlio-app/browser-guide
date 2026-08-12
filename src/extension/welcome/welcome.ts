@@ -2,13 +2,14 @@ import { isHostHealthResponse } from "../../shared/native-protocol.js";
 import { isRecord } from "../../shared/protocol.js";
 
 const GUIDE_URL = "https://docs.crawlio.app/browser-guide/overview";
+const PRACTICE_URL = "https://docs.crawlio.app/browser-guide/practice";
 const ALL_SET_DELAY_MS = 1_400;
 
 /** Human labels for every optional capability this build can declare. The
  *  modal list derives from the live manifest so a new permission can never
  *  ship without a matching line of consent copy. */
 const PERMISSION_LABELS: Record<string, string> = {
-  nativeMessaging: "Confirm the local Keychain helper is genuine",
+  nativeMessaging: "Talk to the local Browser Guide helper on this computer",
 };
 
 function requiredElement<T extends HTMLElement>(id: string): T {
@@ -146,14 +147,15 @@ function finishOnboarding(): void {
   markStepDone(stepGrant);
   stepTour.classList.add("current");
   connectTitle.textContent = "You're all set!";
-  connectSubtitle.textContent = "Taking you to your first tour…";
+  connectSubtitle.textContent = "Taking you to the practice page — the guide will show you around…";
   allSetMascot.hidden = false;
   connectButton.hidden = true;
   recheckButton.hidden = true;
   setStatus(null);
-  // A short pause lets the green check land before the handoff.
+  // A short pause lets the green check land before the handoff. First stop is
+  // the practice page: a safe, inert playground before any real site.
   window.setTimeout(() => {
-    window.location.href = GUIDE_URL + "?from=extension";
+    window.location.href = PRACTICE_URL + "?from=extension";
   }, ALL_SET_DELAY_MS);
 }
 

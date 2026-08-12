@@ -58,7 +58,6 @@ export class VoiceSession {
   private connectionMode: RealtimeMode | null = null;
   private generation = 0;
   private startingTurn = false;
-  private spokenAnswers = false;
   private memoryOrigin: string | null = null;
   private memoryText = "";
   private hasMicrophone = false;
@@ -70,10 +69,6 @@ export class VoiceSession {
     private readonly broker: SessionBroker,
     private readonly callbacks: VoiceSessionCallbacks,
   ) {}
-
-  setSpokenAnswers(value: boolean): void {
-    this.spokenAnswers = value;
-  }
 
   /** Best-effort site history from the local helper; injected only while the
    *  turn's evidence still belongs to the same origin. */
@@ -246,7 +241,9 @@ export class VoiceSession {
   }
 
   private preferredTypedMode(): RealtimeMode {
-    return this.mode === "voice" || this.spokenAnswers ? "voice" : "text";
+    // Typed questions always negotiate text: spoken playback of typed answers
+    // happens locally in the panel (speechSynthesis), never over Realtime.
+    return this.mode === "voice" ? "voice" : "text";
   }
 
   private async ensureConnected(mode: RealtimeMode, needMicrophone = false): Promise<void> {

@@ -97,7 +97,7 @@ describe.skipIf(!existsSync(chromiumPath))("load-unpacked extension package", ()
       (element as HTMLButtonElement).click();
     });
     await expect.poll(() => wizardPage.locator(".modal-overlay.visible").count()).toBe(1);
-    await expect.poll(() => wizardPage.locator("#permission-list li").allInnerTexts()).toContain("Confirm the local Keychain helper is genuine");
+    await expect.poll(() => wizardPage.locator("#permission-list li").allInnerTexts()).toContain("Talk to the local Browser Guide helper on this computer");
     await wizardPage.locator("#cancel-btn").evaluate((element) => {
       (element as HTMLButtonElement).click();
     });

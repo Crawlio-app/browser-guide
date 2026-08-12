@@ -181,6 +181,21 @@ describe("Realtime voice guidance flow", () => {
     expect(microphoneTrack.stop).toHaveBeenCalledOnce();
   });
 
+  it("always negotiates text mode for typed questions — spoken playback is local, never Realtime", async () => {
+    const createSession = vi.fn(async () => "v=0\r\ns=fake-answer\r\n");
+    const session = new VoiceSession({ createSession } as SessionBroker, {
+      onState: vi.fn(),
+      onUserTranscript: vi.fn(),
+      onAssistantTranscript: vi.fn(),
+      onGuidance: vi.fn(async () => ({ ok: true })),
+      onError: vi.fn(),
+    });
+
+    await session.sendTyped("What is this page?", pageContext);
+    expect(createSession).toHaveBeenCalledWith(expect.stringContaining("v=0"), "text");
+    await session.close();
+  });
+
   it("keeps the voice session open until the audio playout drain signal, then closes", async () => {
     const broker = { createSession: vi.fn(async () => "v=0\r\ns=fake-answer\r\n") } as SessionBroker;
     const states: string[] = [];

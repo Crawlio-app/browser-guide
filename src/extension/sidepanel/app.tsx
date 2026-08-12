@@ -27,9 +27,10 @@ import {
   type WalkthroughSession,
 } from "../../shared/protocol.js";
 import { WalkthroughCoordinator } from "../../shared/walkthrough.js";
+import { DEMO_TOUR_GOAL, isPracticePage, resolveDemoStep } from "./demo-tour.js";
 import { SessionBrokerError, VoiceSession, type GuideUiState, type RealtimeMode, type SessionBroker, type VoiceErrorKind } from "./voice-session.js";
 
-type SetupState = "booting" | "helper-missing" | "permission-needed" | "key-missing" | "ready";
+type SetupState = "booting" | "helper-missing" | "permission-needed" | "key-missing" | "demo" | "ready";
 type ToolbarState = "Ready" | "Guiding" | "Listening" | "Paused" | "Unavailable";
 
 interface ConversationEntry {
@@ -78,6 +79,7 @@ const PLACEHOLDERS: Record<GuideMode, string> = {
 };
 
 const TOUR_GOAL = "Show me around this page";
+const PRACTICE_URL = "https://docs.crawlio.app/browser-guide/practice";
 
 class RuntimeSessionBroker implements SessionBroker {
   async createSession(sdp: string, mode: RealtimeMode): Promise<string> {
@@ -106,6 +108,8 @@ function BrowserGuideApp(): React.ReactElement {
   const [shareVisual, setShareVisual] = useState(false);
   const [speakAnswers, setSpeakAnswers] = useState(false);
   const [agentEyes, setAgentEyes] = useState(false);
+  const [demoActive, setDemoActive] = useState(false);
+  const demoStateRef = useRef<{ stepIndex: number } | null>(null);
   const [keyPresent, setKeyPresent] = useState(false);
   const [keyBusy, setKeyBusy] = useState(false);
   const [lastGuidance, setLastGuidance] = useState<LastGuidance | null>(null);
@@ -125,6 +129,8 @@ function BrowserGuideApp(): React.ReactElement {
   const lastVoiceQuestion = useRef("");
   const lastCaptureOrigin = useRef<string | null>(null);
   const activeTurnQuestion = useRef("");
+  const lastTurnTyped = useRef(false);
+  const speakAnswersRef = useRef(false);
   const transientKeyInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -136,6 +142,7 @@ function BrowserGuideApp(): React.ReactElement {
   const startingVoice = useRef(false);
   const continuingWalkthrough = useRef(false);
   runtimeRef.current = runtime;
+  speakAnswersRef.current = speakAnswers;
 
   const broker = useMemo(() => new RuntimeSessionBroker(), []);
 
@@ -246,6 +253,9 @@ function BrowserGuideApp(): React.ReactElement {
         const completedEntryId = entryId;
         updateEntry(completedEntryId, (entry) => ({ ...entry, status: "complete" }));
         setLiveAnnouncement(finalAssistantText.current.slice(0, 500));
+        // Typed answers speak locally through the system voice; microphone
+        // conversations already arrive as OpenAI audio and must not double up.
+        if (speakAnswersRef.current && lastTurnTyped.current) speakLocally(finalAssistantText.current);
         if (turn.mode !== "walkthrough" && lastCaptureOrigin.current) {
           rememberSiteExchange(lastCaptureOrigin.current, activeTurnQuestion.current, finalAssistantText.current);
         }
@@ -267,10 +277,10 @@ function BrowserGuideApp(): React.ReactElement {
 
   const toggleSpeakAnswers = useCallback(() => {
     setSpeakAnswers((current) => {
-      session.setSpokenAnswers(!current);
+      if (current) stopSpeaking();
       return !current;
     });
-  }, [session]);
+  }, []);
 
   const refreshHost = useCallback(async (showBoot = true) => {
     if (showBoot) setSetup("booting");
@@ -318,16 +328,20 @@ function BrowserGuideApp(): React.ReactElement {
     setPageTitle(response.context.title);
     activeEvidenceSnapshotId.current = response.context.snapshotId;
     lastCaptureOrigin.current = response.context.origin;
-    // Best-effort local history for this site; the turn proceeds without it.
-    session.setSiteMemory(response.context.origin, await fetchSiteMemory(response.context.origin));
-    if (agentEyes) publishAgentEyes(response.context);
+    // Helper-backed extras only when the helper is reachable; demo-mode
+    // captures must not wait on a host that is not installed.
+    if (setup === "ready") {
+      // Best-effort local history for this site; the turn proceeds without it.
+      session.setSiteMemory(response.context.origin, await fetchSiteMemory(response.context.origin));
+      if (agentEyes) publishAgentEyes(response.context);
+    }
     if (shareVisual && response.context.visualOmission && response.context.visualOmission.reason !== "not-requested") {
       setIssue({ kind: "page", message: "The visual was omitted to stay within the privacy and size limit." });
     } else {
       setIssue((current) => current?.kind === "page" ? null : current);
     }
     return response.context;
-  }, [agentEyes, session, shareVisual]);
+  }, [agentEyes, session, setup, shareVisual]);
 
   const toggleAgentEyes = useCallback(() => {
     setAgentEyes((current) => {
@@ -346,7 +360,7 @@ function BrowserGuideApp(): React.ReactElement {
   const submitQuestion = useCallback(async (override?: string, overrideMode?: GuideMode) => {
     const selectedMode = overrideMode ?? mode;
     const cleanQuestion = (override ?? question).trim();
-    if (!cleanQuestion || setup !== "ready" || voiceState === "thinking" || voiceState === "speaking"
+    if (!cleanQuestion || setup !== "ready" || demoStateRef.current || voiceState === "thinking" || voiceState === "speaking"
       || submittingQuestion.current || startingVoice.current || continuingWalkthrough.current) return;
     submittingQuestion.current = true;
     if (refreshTimer.current !== null) {
@@ -371,6 +385,8 @@ function BrowserGuideApp(): React.ReactElement {
     appendEntry(entry);
     assistantEntryId.current = entryId;
     activeTurnQuestion.current = cleanQuestion;
+    stopSpeaking();
+    lastTurnTyped.current = true;
     setQuestion("");
     setIssue(null);
     try {
@@ -434,6 +450,7 @@ function BrowserGuideApp(): React.ReactElement {
         updateEntry(entryId, (entry) => ({ ...entry, answer: "", status: "pending", error: undefined }));
       }
       assistantEntryId.current = entryId;
+      lastTurnTyped.current = false;
       await session.continueWalkthrough(context, active.goal, active.step);
     } catch (error) {
       const message = errorMessage(error, "The fresh page view could not be read.");
@@ -446,7 +463,7 @@ function BrowserGuideApp(): React.ReactElement {
       continuingWalkthrough.current = false;
     }
   }, [appendEntry, capturePage, session, updateEntry]);
-  advanceWalkthroughRef.current = advanceWalkthrough;
+  // advanceWalkthroughRef is assigned below, after the demo-tour dispatcher.
 
   const handleRefsInvalidated = useCallback(() => {
     setLastGuidance((current) => current ? { ...current, visible: false } : current);
@@ -471,7 +488,7 @@ function BrowserGuideApp(): React.ReactElement {
   }, []);
 
   const toggleListening = useCallback(async () => {
-    if (setup !== "ready") return;
+    if (setup !== "ready" || demoStateRef.current) return;
     if (voiceState === "listening") {
       session.stopListening();
       return;
@@ -504,6 +521,8 @@ function BrowserGuideApp(): React.ReactElement {
       return;
     }
     try {
+      stopSpeaking();
+      lastTurnTyped.current = false;
       activeVoiceMode.current = mode;
       voiceContextOrigin.current = context.origin;
       await session.startListening(context, mode);
@@ -559,6 +578,8 @@ function BrowserGuideApp(): React.ReactElement {
         }
       } else if (message.type === "GUIDE_OVERLAY_DONE") {
         if (sender.tab?.id === runtimeRef.current.tabId && walkthroughCoordinator.current.session) {
+          demoStateRef.current = null;
+          setDemoActive(false);
           setWalkthrough(walkthroughCoordinator.current.complete());
           setLastGuidance((current) => current ? { ...current, visible: false } : current);
           setLiveAnnouncement("Walkthrough complete.");
@@ -596,6 +617,7 @@ function BrowserGuideApp(): React.ReactElement {
       turnEntryIds.current.clear();
       chrome.runtime.onMessage.removeListener(listener);
       document.removeEventListener("visibilitychange", visibilityListener);
+      stopSpeaking();
       void session.close();
     };
   }, [handleRefsInvalidated, refreshHost, session]);
@@ -731,6 +753,8 @@ function BrowserGuideApp(): React.ReactElement {
   }, [clearGuidance, session]);
 
   const stopWalkthrough = useCallback(async () => {
+    demoStateRef.current = null;
+    setDemoActive(false);
     walkthroughCoordinator.current.stop();
     walkthroughEntryId.current = null;
     setWalkthrough(null);
@@ -771,7 +795,127 @@ function BrowserGuideApp(): React.ReactElement {
   }, []);
   continueWalkthroughRef.current = continueWalkthrough;
 
+  // --- Canned practice tour: same overlay, card, and coordinator as a real
+  // walkthrough, but every step is resolved locally — no model, no helper. ---
+
+  const presentDemoStep = useCallback(async (initialContext: PageContext, index: number): Promise<boolean> => {
+    let context = initialContext;
+    let command = resolveDemoStep(context, index);
+    if (!command) {
+      // One settle-and-retry: the page may still be laying out.
+      await new Promise((resolveDelay) => window.setTimeout(resolveDelay, 400));
+      context = await capturePage();
+      command = resolveDemoStep(context, index);
+    }
+    let shown = false;
+    if (command) {
+      const response = await runtimeSend<unknown>({
+        type: "GUIDE_SHOW_GUIDANCE",
+        snapshotId: context.snapshotId,
+        command,
+      });
+      shown = isGuidanceResponse(response) && response.ok;
+      if (!shown) {
+        // The snapshot went stale between capture and show. Refs never survive
+        // a recapture, so re-resolve the matcher against the fresh evidence.
+        context = await capturePage();
+        command = resolveDemoStep(context, index);
+        if (command) {
+          const retry = await runtimeSend<unknown>({
+            type: "GUIDE_SHOW_GUIDANCE",
+            snapshotId: context.snapshotId,
+            command,
+          });
+          shown = isGuidanceResponse(retry) && retry.ok;
+        }
+      }
+    }
+    if (!command || !shown) {
+      setWalkthrough(walkthroughCoordinator.current.pause("stale-evidence"));
+      setIssue({ kind: "stale", message: "The practice page changed. Press Continue to retry this tour step." });
+      return false;
+    }
+    demoStateRef.current = { stepIndex: index };
+    setLastGuidance({ command, snapshotId: context.snapshotId, visible: true });
+    setWalkthrough(walkthroughCoordinator.current.receiveGuidance(command));
+    setLiveAnnouncement(`${command.title}. ${command.body}`);
+    return true;
+  }, [capturePage]);
+
+  const startDemoTour = useCallback(async () => {
+    if (submittingQuestion.current || startingVoice.current || continuingWalkthrough.current) return;
+    if (session.busy) {
+      setIssue({ kind: "page", message: "Finish or stop the current answer before starting the practice tour." });
+      return;
+    }
+    if (runtimeRef.current.status !== "ready") {
+      window.open(PRACTICE_URL);
+      setIssue({ kind: "page", message: "The practice page just opened. Click the Browser Guide toolbar icon there, then press Practice tour again." });
+      return;
+    }
+    await stopWalkthrough();
+    continuingWalkthrough.current = true;
+    try {
+      const context = await capturePage();
+      if (!isPracticePage(context)) {
+        window.open(PRACTICE_URL);
+        setIssue({ kind: "page", message: "The tour runs on the practice page — it just opened. Click the toolbar icon there, then press Practice tour again." });
+        return;
+      }
+      demoStateRef.current = { stepIndex: 0 };
+      setDemoActive(true);
+      setIssue(null);
+      setWalkthrough(walkthroughCoordinator.current.start(DEMO_TOUR_GOAL, context.origin));
+      await presentDemoStep(context, 0);
+    } catch (error) {
+      demoStateRef.current = null;
+      setDemoActive(false);
+      setIssue({ kind: "page", message: errorMessage(error, "The practice page could not be read.") });
+    } finally {
+      continuingWalkthrough.current = false;
+    }
+  }, [capturePage, presentDemoStep, session, stopWalkthrough]);
+
+  const advanceDemoTour = useCallback(async () => {
+    const demo = demoStateRef.current;
+    if (!demo || submittingQuestion.current || startingVoice.current || continuingWalkthrough.current) return;
+    continuingWalkthrough.current = true;
+    if (refreshTimer.current !== null) {
+      window.clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+    }
+    try {
+      const active = walkthroughCoordinator.current.beginRefresh();
+      if (!active) {
+        setWalkthrough(walkthroughCoordinator.current.session);
+        return;
+      }
+      setWalkthrough(active);
+      const context = await capturePage();
+      if (context.origin !== active.origin) {
+        setWalkthrough(walkthroughCoordinator.current.pause("origin-changed"));
+        return;
+      }
+      // The index only commits inside presentDemoStep on success, so a failed
+      // present leaves Continue retrying the same step instead of skipping it.
+      await presentDemoStep(context, demo.stepIndex + 1);
+    } catch (error) {
+      setIssue({ kind: "stale", message: errorMessage(error, "The fresh page view could not be read.") });
+      setWalkthrough(walkthroughCoordinator.current.pause("stale-evidence"));
+    } finally {
+      continuingWalkthrough.current = false;
+    }
+  }, [capturePage, presentDemoStep]);
+
+  // Every advance path (overlay Next, the card's Continue, the refs-invalidated
+  // scheduler) funnels through this ref — route demo vs. model here, once.
+  advanceWalkthroughRef.current = async () => {
+    if (demoStateRef.current) await advanceDemoTour();
+    else await advanceWalkthrough();
+  };
+
   const clearConversation = useCallback(async () => {
+    stopSpeaking();
     await stopWalkthrough();
     await runtimeSend({ type: "GUIDE_END_SESSION" });
     setEntries([]);
@@ -822,15 +966,17 @@ function BrowserGuideApp(): React.ReactElement {
     if (workspace) workspace.scrollTop = workspace.scrollHeight;
   }, [entries, walkthrough]);
 
-  const toolbarState: ToolbarState = setup !== "ready"
-    ? "Unavailable"
-    : walkthrough?.phase === "paused" || runtime.status === "permission-paused"
-      ? "Paused"
-        : walkthrough && walkthrough.phase !== "complete" ? "Guiding"
-        : voiceState === "listening" ? "Listening"
-          : voiceState === "offline" ? "Unavailable" : "Ready";
+  const toolbarState: ToolbarState = setup === "demo"
+    ? (demoActive && walkthrough?.phase !== "paused" ? "Guiding" : "Paused")
+    : setup !== "ready"
+      ? "Unavailable"
+      : walkthrough?.phase === "paused" || runtime.status === "permission-paused"
+        ? "Paused"
+          : walkthrough && walkthrough.phase !== "complete" ? "Guiding"
+          : voiceState === "listening" ? "Listening"
+            : voiceState === "offline" ? "Unavailable" : "Ready";
 
-  if (setup !== "ready") {
+  if (setup !== "ready" && setup !== "demo") {
     return (
       <main className="guide-shell setup-shell" data-setup={setup}>
         <SetupView
@@ -844,12 +990,18 @@ function BrowserGuideApp(): React.ReactElement {
           onImport={importCredentials}
           onPermission={requestNativePermission}
           onRetry={refreshHost}
+          onDemo={() => {
+            setSetup("demo");
+            window.open(PRACTICE_URL);
+          }}
         />
       </main>
     );
   }
 
   const pagePaused = runtime.status === "permission-paused";
+  const inDemo = setup === "demo";
+  const composerLocked = pagePaused || inDemo || demoActive;
   return (
     <main className="guide-shell" data-toolbar-state={toolbarState.toLowerCase()}>
       <p className="sr-only" aria-live="polite" aria-atomic="true">{liveAnnouncement}</p>
@@ -868,6 +1020,16 @@ function BrowserGuideApp(): React.ReactElement {
       </header>
 
       <div className="workspace" ref={workspaceRef}>
+        {inDemo && (
+          <section className="recovery-line demo-banner" role="status">
+            <span>Demo mode — real questions need the local helper.</span>
+            <button type="button" onClick={() => void startDemoTour()}>Practice tour</button>
+            <button type="button" onClick={() => {
+              setSetup("booting");
+              void refreshHost();
+            }}>Finish setup</button>
+          </section>
+        )}
         {pagePaused && (
           <section className="recovery-line" role="status">
             <span>{pageRecoveryCopy(runtime)}</span>
@@ -918,7 +1080,7 @@ function BrowserGuideApp(): React.ReactElement {
               <h1>What do you need?</h1>
               <div className="intent-launcher" aria-label="Guide modes">
                 {(["ask", "find", "walkthrough"] as const).map((value) => (
-                  <button key={value} type="button" onClick={() => {
+                  <button key={value} type="button" disabled={inDemo} onClick={() => {
                     setMode(value);
                     // A walkthrough needs no typed goal: selecting it starts a
                     // guided tour of the current page right away.
@@ -936,6 +1098,9 @@ function BrowserGuideApp(): React.ReactElement {
                   </button>
                 ))}
               </div>
+              <button type="button" className="practice-link" onClick={() => void startDemoTour()}>
+                Practice tour — a guided demo on a safe page
+              </button>
               <p className="brand-line">
                 <a href="https://www.crawlio.app" target="_blank" rel="noreferrer">by Crawlio</a>
               </p>
@@ -983,7 +1148,7 @@ function BrowserGuideApp(): React.ReactElement {
             type="button"
             className={`speak-toggle${speakAnswers ? " on" : ""}`}
             aria-pressed={speakAnswers}
-            title={speakAnswers ? "Answers are spoken aloud" : "Speak answers aloud"}
+            title={speakAnswers ? "Typed answers are spoken aloud on this device" : "Speak typed answers aloud on this device"}
             onClick={toggleSpeakAnswers}
           >
             <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -1012,7 +1177,7 @@ function BrowserGuideApp(): React.ReactElement {
             aria-label={voiceState === "listening" ? "Stop listening" : "Ask by voice"}
             aria-pressed={voiceState === "listening"}
             title="Voice · ⌘⇧G"
-            disabled={pagePaused || voiceState === "thinking" || voiceState === "speaking" || voiceState === "pointing"}
+            disabled={composerLocked || voiceState === "thinking" || voiceState === "speaking" || voiceState === "pointing"}
             onClick={() => void toggleListening()}
           >
             <span aria-hidden="true"><i /><i /><i /></span>
@@ -1032,7 +1197,7 @@ function BrowserGuideApp(): React.ReactElement {
             rows={1}
             aria-label={PLACEHOLDERS[mode]}
             placeholder={PLACEHOLDERS[mode]}
-            disabled={pagePaused}
+            disabled={composerLocked}
           />
           <button className="send-button" type="submit" aria-label={`Send ${MODE_LABELS[mode].toLowerCase()} request`} disabled={!question.trim() || pagePaused}>↑</button>
         </form>
@@ -1052,6 +1217,7 @@ interface SetupViewProps {
   onImport(provider: CredentialProvider): Promise<void>;
   onPermission(): Promise<void>;
   onRetry(showBoot?: boolean): Promise<void>;
+  onDemo(): void;
 }
 
 function SetupView(props: SetupViewProps): React.ReactElement {
@@ -1095,7 +1261,10 @@ function SetupView(props: SetupViewProps): React.ReactElement {
       ) : props.state === "permission-needed" ? (
         <button className="setup-action" type="button" onClick={() => void props.onPermission()}>Allow helper</button>
       ) : props.state === "helper-missing" ? (
-        <button className="setup-action" type="button" onClick={() => void props.onRetry()}>Check again</button>
+        <>
+          <button className="setup-action" type="button" onClick={() => void props.onRetry()}>Check again</button>
+          <button className="setup-secondary" type="button" onClick={props.onDemo}>Try the demo first</button>
+        </>
       ) : <span className="setup-loader" aria-hidden="true" />}
 
       {props.issue && <p className="setup-error" role="status">{props.issue.message}</p>}
@@ -1176,6 +1345,7 @@ function setupCopy(state: SetupState): { kicker: string; title: string; line: st
     case "helper-missing": return { kicker: "One-time setup", title: "Open the helper", line: "Run Browser Guide Helper once, then return here.", privacy: "Local to this Mac." };
     case "permission-needed": return { kicker: "One-time setup", title: "Allow the helper", line: "Chrome needs permission to reach the local app.", privacy: "Exact extension only." };
     case "key-missing": return { kicker: "Final step", title: "Connect a credential", line: "Use an existing harness sign-in, or paste a key. Stored locally, never in Chrome.", privacy: "Saved to a private local file." };
+    case "demo":
     case "ready": return { kicker: "", title: "", line: "", privacy: "" };
   }
 }
@@ -1273,6 +1443,19 @@ async function fetchSiteMemory(origin: string): Promise<SiteMemoryNote[]> {
   } catch {
     return [];
   }
+}
+
+function speakLocally(text: string): void {
+  const clean = text.trim();
+  if (!clean || typeof speechSynthesis === "undefined") return;
+  speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(clean.slice(0, 4_000));
+  utterance.lang = "en-US";
+  speechSynthesis.speak(utterance);
+}
+
+function stopSpeaking(): void {
+  if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
 }
 
 function publishAgentEyes(context: PageContext): void {
