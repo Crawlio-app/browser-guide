@@ -2,14 +2,22 @@ import Foundation
 
 public struct BrowserGuideHostService: Sendable {
     private let keyStore: any APIKeyStoring
+    private let importer: (any CredentialImporting)?
     private let realtimeClient: RealtimeClient
 
     public init(
-        keyStore: any APIKeyStoring = KeychainStore(),
+        keyStore: any APIKeyStoring,
+        importer: (any CredentialImporting)? = nil,
         realtimeClient: RealtimeClient = RealtimeClient()
     ) {
         self.keyStore = keyStore
+        self.importer = importer
         self.realtimeClient = realtimeClient
+    }
+
+    public init(realtimeClient: RealtimeClient = RealtimeClient()) {
+        let store = FileCredentialStore()
+        self.init(keyStore: store, importer: store, realtimeClient: realtimeClient)
     }
 
     public func handle(_ request: HostRequest) async -> Data {
@@ -20,6 +28,9 @@ public struct BrowserGuideHostService: Sendable {
             return (try? HostProtocolCodec.failure(failure)) ?? Data()
         } catch let error as KeychainStoreError {
             let failure = mapKeychainError(error, request: request)
+            return (try? HostProtocolCodec.failure(failure)) ?? Data()
+        } catch let error as CredentialStoreError {
+            let failure = mapCredentialError(error, requestID: request.requestID)
             return (try? HostProtocolCodec.failure(failure)) ?? Data()
         } catch let error as RealtimeClientError {
             let failure = mapRealtimeError(error, requestID: request.requestID)
@@ -70,6 +81,23 @@ public struct BrowserGuideHostService: Sendable {
             try keyStore.deleteAPIKey()
             return ["configured": false]
 
+        case .importCredentials(let provider) where request.type == .importCredentials:
+            guard let importer else {
+                throw HostFailure(
+                    code: .secureStorageError,
+                    message: "Credential import is unavailable in this host build.",
+                    retryable: false,
+                    requestID: request.requestID
+                )
+            }
+            let outcome = try importer.importCredentials(from: provider)
+            return [
+                "imported": true,
+                "provider": outcome.provider.rawValue,
+                "method": outcome.method,
+                "configured": outcome.configured,
+            ]
+
         case .createSession(let sdp, let mode) where request.type == .createSession:
             guard let apiKey = try keyStore.readAPIKey() else {
                 throw HostFailure(
@@ -92,6 +120,32 @@ public struct BrowserGuideHostService: Sendable {
                 message: "The native request payload does not match its type.",
                 retryable: false,
                 requestID: request.requestID
+            )
+        }
+    }
+
+    private func mapCredentialError(_ error: CredentialStoreError, requestID: String) -> HostFailure {
+        switch error {
+        case .importSourceMissing(let message), .importSourceInvalid(let message):
+            return HostFailure(
+                code: .notConfigured,
+                message: message,
+                retryable: false,
+                requestID: requestID
+            )
+        case .malformedStore:
+            return HostFailure(
+                code: .secureStorageError,
+                message: "The credential store file is damaged. Remove ~/.config/browser-guide/credentials.json and add your key again.",
+                retryable: false,
+                requestID: requestID
+            )
+        case .ioFailure(let message):
+            return HostFailure(
+                code: .secureStorageError,
+                message: message,
+                retryable: true,
+                requestID: requestID
             )
         }
     }

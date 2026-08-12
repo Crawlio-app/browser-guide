@@ -81,21 +81,23 @@ struct BrowserGuideNativeHost {
     private static func makeService() -> BrowserGuideHostService {
         #if DEBUG
         let environment = ProcessInfo.processInfo.environment
-        let keyStore: any APIKeyStoring = environment["BROWSER_GUIDE_TEST_IN_MEMORY_KEYCHAIN"] == "1"
-            ? DebugMemoryKeyStore()
-            : KeychainStore()
+        let fileStore = FileCredentialStore()
+        let useMemoryStore = environment["BROWSER_GUIDE_TEST_IN_MEMORY_KEYCHAIN"] == "1"
+        let keyStore: any APIKeyStoring = useMemoryStore ? DebugMemoryKeyStore() : fileStore
+        let importer: (any CredentialImporting)? = useMemoryStore ? nil : fileStore
         if let rawDelay = environment["BROWSER_GUIDE_TEST_REALTIME_DELAY_MILLISECONDS"],
            let delayMilliseconds = UInt64(rawDelay),
            (1...10_000).contains(delayMilliseconds) {
             return BrowserGuideHostService(
                 keyStore: keyStore,
+                importer: importer,
                 realtimeClient: RealtimeClient(
                     transport: DebugDelayedRealtimeTransport(delayMilliseconds: delayMilliseconds),
                     timeoutSeconds: 20
                 )
             )
         }
-        return BrowserGuideHostService(keyStore: keyStore)
+        return BrowserGuideHostService(keyStore: keyStore, importer: importer)
         #else
         return BrowserGuideHostService()
         #endif

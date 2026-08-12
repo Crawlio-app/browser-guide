@@ -7,6 +7,8 @@ import {
   type HostClientErrorCode,
   type HostClientFailure,
   type NativeCreateSessionData,
+  type NativeImportData,
+  type CredentialProvider,
   type NativeForgetData,
   type NativeHealthData,
   type NativeHostRequest,
@@ -61,6 +63,7 @@ interface NativeDataByRequest {
   HOST_CONFIGURE_KEY: NativeConfigureData;
   HOST_FORGET_KEY: NativeForgetData;
   HOST_CREATE_SESSION: NativeCreateSessionData;
+  HOST_IMPORT_CREDENTIALS: NativeImportData;
 }
 
 export class NativeHostClientError extends Error {
@@ -122,6 +125,11 @@ export class NativeHostClient {
     return this.runBounded(request, NATIVE_TIMEOUT_MS.createSession);
   }
 
+  importCredentials(provider: CredentialProvider): Promise<NativeImportData> {
+    const request = this.makeRequest("HOST_IMPORT_CREDENTIALS", { provider });
+    return this.runBounded(request, NATIVE_TIMEOUT_MS.importCredentials);
+  }
+
   disconnect(): void {
     this.generation += 1;
     this.connectionPromise = null;
@@ -147,8 +155,12 @@ export class NativeHostClient {
     payload: { sdp: string; mode: RealtimeSessionMode },
   ): Extract<NativeHostRequest, { type: "HOST_CREATE_SESSION" }>;
   private makeRequest(
+    type: "HOST_IMPORT_CREDENTIALS",
+    payload: { provider: CredentialProvider },
+  ): Extract<NativeHostRequest, { type: "HOST_IMPORT_CREDENTIALS" }>;
+  private makeRequest(
     type: NativeRequestType,
-    payload?: { key: string } | { sdp: string; mode: RealtimeSessionMode },
+    payload?: { key: string } | { sdp: string; mode: RealtimeSessionMode } | { provider: CredentialProvider },
   ): NativeHostRequest {
     const requestId = this.createRequestId();
     let request: NativeHostRequest;
@@ -161,6 +173,14 @@ export class NativeHostClient {
         break;
       case "HOST_CONFIGURE_KEY":
         request = { version: NATIVE_PROTOCOL_VERSION, requestId, type, payload: payload as { key: string } };
+        break;
+      case "HOST_IMPORT_CREDENTIALS":
+        request = {
+          version: NATIVE_PROTOCOL_VERSION,
+          requestId,
+          type,
+          payload: payload as { provider: CredentialProvider },
+        };
         break;
       case "HOST_CREATE_SESSION":
         request = {

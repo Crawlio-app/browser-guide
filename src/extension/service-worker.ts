@@ -259,6 +259,16 @@ async function handleHostBridgeRequest(message: HostBridgeRequest): Promise<Host
         const result = await nativeHost.forget();
         return { ok: true, configured: result.configured };
       }
+      case "GUIDE_HOST_IMPORT_CREDENTIALS": {
+        const result = await nativeHost.importCredentials(message.provider);
+        return {
+          ok: true,
+          imported: result.imported,
+          provider: result.provider,
+          method: result.method,
+          configured: result.configured,
+        };
+      }
       case "GUIDE_HOST_CREATE_SESSION": {
         const result = await nativeHost.createSession(message.sdp, message.mode);
         return {

@@ -17,6 +17,7 @@ public enum HostRequestType: String, Sendable {
     case configureKey = "HOST_CONFIGURE_KEY"
     case forgetKey = "HOST_FORGET_KEY"
     case createSession = "HOST_CREATE_SESSION"
+    case importCredentials = "HOST_IMPORT_CREDENTIALS"
 }
 
 public enum RealtimeMode: String, Sendable {
@@ -28,6 +29,7 @@ public enum HostRequestPayload: Sendable, Equatable {
     case none
     case configureKey(String)
     case createSession(sdp: String, mode: RealtimeMode)
+    case importCredentials(CredentialProvider)
 }
 
 public struct HostRequest: Sendable, Equatable {
@@ -131,6 +133,14 @@ public enum HostProtocolCodec {
                 throw invalid("Enter a valid OpenAI API key.", requestID: requestID)
             }
             return HostRequest(requestID: requestID, type: type, payload: .configureKey(trimmed))
+
+        case .importCredentials:
+            let payload = try exactPayload(object["payload"], keys: ["provider"], requestID: requestID)
+            guard let providerName = payload["provider"] as? String,
+                  let provider = CredentialProvider(rawValue: providerName) else {
+                throw invalid("The import payload is invalid.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .importCredentials(provider))
 
         case .createSession:
             let payload = try exactPayload(object["payload"], keys: ["sdp", "mode"], requestID: requestID)

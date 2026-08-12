@@ -87,6 +87,22 @@ public struct KeychainStore: APIKeyStoring, Sendable {
         }
     }
 
+    /// Attribute-only existence probe: never touches the secret data, so it
+    /// cannot trigger the macOS access-control consent prompt.
+    public func itemExists() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnAttributes as String: true,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        return status == errSecSuccess
+    }
+
     public func saveAPIKey(_ apiKey: String) throws {
         let state = KeychainOperationState<Void>()
         let completion = DispatchSemaphore(value: 0)

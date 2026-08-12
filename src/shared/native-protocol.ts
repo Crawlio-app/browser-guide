@@ -17,17 +17,20 @@ export const NATIVE_TIMEOUT_MS = {
   health: 3_000,
   configure: 8_000,
   forget: 8_000,
+  importCredentials: 8_000,
   createSession: 30_000,
 } as const;
 
-export type NativeRequestType = "HOST_HEALTH" | "HOST_CONFIGURE_KEY" | "HOST_FORGET_KEY" | "HOST_CREATE_SESSION";
+export type NativeRequestType = "HOST_HEALTH" | "HOST_CONFIGURE_KEY" | "HOST_FORGET_KEY" | "HOST_CREATE_SESSION" | "HOST_IMPORT_CREDENTIALS";
+export type CredentialProvider = "codex" | "claude-code";
 export type RealtimeSessionMode = "text" | "voice";
 
 export type NativeHostRequest =
   | { version: 1; requestId: string; type: "HOST_HEALTH" }
   | { version: 1; requestId: string; type: "HOST_CONFIGURE_KEY"; payload: { key: string } }
   | { version: 1; requestId: string; type: "HOST_FORGET_KEY" }
-  | { version: 1; requestId: string; type: "HOST_CREATE_SESSION"; payload: { sdp: string; mode: RealtimeSessionMode } };
+  | { version: 1; requestId: string; type: "HOST_CREATE_SESSION"; payload: { sdp: string; mode: RealtimeSessionMode } }
+  | { version: 1; requestId: string; type: "HOST_IMPORT_CREDENTIALS"; payload: { provider: CredentialProvider } };
 
 export interface NativeHealthData {
   ready: true;
@@ -48,11 +51,19 @@ export interface NativeCreateSessionData {
   upstreamRequestId?: string;
 }
 
+export interface NativeImportData {
+  imported: true;
+  provider: CredentialProvider;
+  method: "api_key" | "oauth";
+  configured: boolean;
+}
+
 export type NativeSuccessData =
   | NativeHealthData
   | NativeConfigureData
   | NativeForgetData
-  | NativeCreateSessionData;
+  | NativeCreateSessionData
+  | NativeImportData;
 
 export const NATIVE_HOST_ERROR_CODES = [
   "INVALID_REQUEST",
@@ -83,6 +94,7 @@ export type HostBridgeRequest =
   | { type: "GUIDE_HOST_CONFIGURE_KEY"; key: string }
   | { type: "GUIDE_HOST_FORGET_KEY" }
   | { type: "GUIDE_HOST_CREATE_SESSION"; sdp: string; mode: RealtimeSessionMode }
+  | { type: "GUIDE_HOST_IMPORT_CREDENTIALS"; provider: CredentialProvider }
   | { type: "GUIDE_HOST_DISCONNECT" };
 
 export type HostClientErrorCode = NativeHostErrorCode
@@ -121,6 +133,14 @@ export interface HostCreateSessionResponse {
   upstreamRequestId?: string;
 }
 
+export interface HostImportResponse {
+  ok: true;
+  imported: true;
+  provider: CredentialProvider;
+  method: "api_key" | "oauth";
+  configured: boolean;
+}
+
 export interface HostDisconnectResponse {
   ok: true;
 }
@@ -130,6 +150,7 @@ export type HostClientResponse = HostClientFailure
   | HostConfigureResponse
   | HostForgetResponse
   | HostCreateSessionResponse
+  | HostImportResponse
   | HostDisconnectResponse;
 
 export function isHostBridgeRequest(value: unknown): value is HostBridgeRequest {
@@ -145,6 +166,8 @@ export function isHostBridgeRequest(value: unknown): value is HostBridgeRequest 
       return hasExactKeys(value, ["type", "sdp", "mode"])
         && isSessionMode(value.mode)
         && isSdp(value.sdp);
+    case "GUIDE_HOST_IMPORT_CREDENTIALS":
+      return hasExactKeys(value, ["type", "provider"]) && isCredentialProvider(value.provider);
     default:
       return false;
   }
@@ -171,6 +194,11 @@ export function isNativeHostRequest(value: unknown): value is NativeHostRequest 
         && hasExactKeys(value.payload, ["sdp", "mode"])
         && isSessionMode(value.payload.mode)
         && isSdp(value.payload.sdp);
+    case "HOST_IMPORT_CREDENTIALS":
+      return hasExactKeys(value, ["version", "requestId", "type", "payload"])
+        && isRecord(value.payload)
+        && hasExactKeys(value.payload, ["provider"])
+        && isCredentialProvider(value.payload.provider);
     default:
       return false;
   }
@@ -201,6 +229,8 @@ export function isNativeHostResponseFor(
       return isNativeForgetData(value.data);
     case "HOST_CREATE_SESSION":
       return isNativeCreateSessionData(value.data);
+    case "HOST_IMPORT_CREDENTIALS":
+      return isNativeImportData(value.data);
   }
 }
 
@@ -271,6 +301,29 @@ export function isNativeCreateSessionData(value: unknown): value is NativeCreate
     && hasExactKeys(value, ["answerSdp"], ["upstreamRequestId"])
     && isSdp(value.answerSdp)
     && (value.upstreamRequestId === undefined || isOpaqueId(value.upstreamRequestId));
+}
+
+export function isNativeImportData(value: unknown): value is NativeImportData {
+  return isRecord(value)
+    && hasExactKeys(value, ["imported", "provider", "method", "configured"])
+    && value.imported === true
+    && isCredentialProvider(value.provider)
+    && (value.method === "api_key" || value.method === "oauth")
+    && typeof value.configured === "boolean";
+}
+
+export function isCredentialProvider(value: unknown): value is CredentialProvider {
+  return value === "codex" || value === "claude-code";
+}
+
+export function isHostImportResponse(value: unknown): value is HostImportResponse | HostClientFailure {
+  return isHostClientFailure(value) || (isRecord(value)
+    && value.ok === true
+    && hasExactKeys(value, ["ok", "imported", "provider", "method", "configured"])
+    && value.imported === true
+    && isCredentialProvider(value.provider)
+    && (value.method === "api_key" || value.method === "oauth")
+    && typeof value.configured === "boolean");
 }
 
 export function isRequestId(value: unknown): value is string {

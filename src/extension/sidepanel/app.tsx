@@ -7,6 +7,8 @@ import {
   isHostCreateSessionResponse,
   isHostForgetResponse,
   isHostHealthResponse,
+  isHostImportResponse,
+  type CredentialProvider,
 } from "../../shared/native-protocol.js";
 import {
   isCaptureResponse,
@@ -278,7 +280,7 @@ function BrowserGuideApp(): React.ReactElement {
           setIssue({
             kind: "key",
             message: response.code === "SECURE_STORAGE_ERROR"
-              ? "macOS Keychain is unavailable. Unlock this Mac, then try again."
+              ? "The local credential store is unavailable. Try again."
               : response.error,
           });
           return;
@@ -599,6 +601,34 @@ function BrowserGuideApp(): React.ReactElement {
     await refreshHost();
   }, [refreshHost]);
 
+  const importCredentials = useCallback(async (provider: CredentialProvider) => {
+    if (keyBusy) return;
+    setKeyBusy(true);
+    setIssue(null);
+    try {
+      const response = await withDeadline(
+        runtimeSend<unknown>({ type: "GUIDE_HOST_IMPORT_CREDENTIALS", provider }),
+        10_000,
+        "The sign-in import did not finish in time.",
+      );
+      if (!isHostImportResponse(response) || !response.ok) {
+        throw new Error(hostError(response, "The sign-in could not be imported."));
+      }
+      if (response.configured) {
+        setSetup("ready");
+      } else {
+        setIssue({
+          kind: "key",
+          message: "Claude Code connected. Realtime voice still needs an OpenAI credential — use the Codex sign-in or paste a key.",
+        });
+      }
+    } catch (error) {
+      setIssue({ kind: "key", message: errorMessage(error, "The sign-in could not be imported.") });
+    } finally {
+      setKeyBusy(false);
+    }
+  }, [keyBusy]);
+
   const configureApiKey = useCallback(async () => {
     if (keyBusy) return;
     const input = transientKeyInput.current;
@@ -615,15 +645,15 @@ function BrowserGuideApp(): React.ReactElement {
       const response = await withDeadline(
         runtimeSend<unknown>({ type: "GUIDE_HOST_CONFIGURE_KEY", key }),
         8_000,
-        "Keychain did not finish within eight seconds. Try again.",
+        "Saving did not finish within eight seconds. Try again.",
       );
       if (!isHostConfigureResponse(response) || !response.ok) {
-        throw new Error(hostError(response, "The key could not be saved to Keychain."));
+        throw new Error(hostError(response, "The key could not be saved."));
       }
       setSetup("ready");
     } catch (error) {
       setSetup("key-missing");
-      setIssue({ kind: "key", message: errorMessage(error, "The key could not be saved to Keychain.") });
+      setIssue({ kind: "key", message: errorMessage(error, "The key could not be saved.") });
     } finally {
       setKeyBusy(false);
     }
@@ -724,10 +754,10 @@ function BrowserGuideApp(): React.ReactElement {
   }, [stopWalkthrough]);
 
   const forgetKey = useCallback(async () => {
-    if (!window.confirm("Remove the OpenAI API key from macOS Keychain?")) return;
+    if (!window.confirm("Remove the stored OpenAI credential from this Mac?")) return;
     const response = await runtimeSend<unknown>({ type: "GUIDE_HOST_FORGET_KEY" });
     if (!isHostForgetResponse(response) || !response.ok) {
-      setIssue({ kind: "key", message: hostError(response, "The key could not be removed from Keychain.") });
+      setIssue({ kind: "key", message: hostError(response, "The credential could not be removed.") });
       return;
     }
     await clearConversation();
@@ -759,6 +789,7 @@ function BrowserGuideApp(): React.ReactElement {
           keyInput={transientKeyInput}
           onKeyPresent={setKeyPresent}
           onConfigureKey={configureApiKey}
+          onImport={importCredentials}
           onPermission={requestNativePermission}
           onRetry={refreshHost}
         />
@@ -960,6 +991,7 @@ interface SetupViewProps {
   keyInput: React.RefObject<HTMLInputElement | null>;
   onKeyPresent(value: boolean): void;
   onConfigureKey(): Promise<void>;
+  onImport(provider: CredentialProvider): Promise<void>;
   onPermission(): Promise<void>;
   onRetry(showBoot?: boolean): Promise<void>;
 }
@@ -978,6 +1010,15 @@ function SetupView(props: SetupViewProps): React.ReactElement {
           event.preventDefault();
           void props.onConfigureKey();
         }}>
+          <div className="signin-options">
+            <button type="button" className="signin-button" disabled={props.keyBusy} onClick={() => void props.onImport("codex")}>
+              Use my Codex sign-in
+            </button>
+            <button type="button" className="signin-button" disabled={props.keyBusy} onClick={() => void props.onImport("claude-code")}>
+              Use my Claude Code sign-in
+            </button>
+          </div>
+          <p className="signin-divider"><span>or paste an API key</span></p>
           <label htmlFor="platform-key">OpenAI API key</label>
           <input
             id="platform-key"
@@ -990,7 +1031,7 @@ function SetupView(props: SetupViewProps): React.ReactElement {
             autoFocus
           />
           <button className="setup-action" type="submit" disabled={!props.keyPresent || props.keyBusy}>
-            {props.keyBusy ? "Saving…" : "Save to Keychain"}
+            {props.keyBusy ? "Saving…" : "Save key"}
           </button>
         </form>
       ) : props.state === "permission-needed" ? (
@@ -1068,7 +1109,7 @@ function setupCopy(state: SetupState): { kicker: string; title: string; line: st
     case "booting": return { kicker: "Local", title: "One moment", line: "Checking this Mac.", privacy: "Nothing leaves Chrome yet." };
     case "helper-missing": return { kicker: "One-time setup", title: "Open the helper", line: "Run Browser Guide Helper once, then return here.", privacy: "Local to this Mac." };
     case "permission-needed": return { kicker: "One-time setup", title: "Allow the helper", line: "Chrome needs permission to reach the local app.", privacy: "Exact extension only." };
-    case "key-missing": return { kicker: "Final step", title: "Add your key", line: "Stored by macOS, never Chrome.", privacy: "Saved in Keychain." };
+    case "key-missing": return { kicker: "Final step", title: "Connect a credential", line: "Use an existing harness sign-in, or paste a key. Stored locally, never in Chrome.", privacy: "Saved to a private local file." };
     case "ready": return { kicker: "", title: "", line: "", privacy: "" };
   }
 }
