@@ -43,7 +43,10 @@ final class KeychainStoreTests: XCTestCase {
     }
 
     func testTimedOutSaveIsRolledBackBeforeAReadCanObserveIt() throws {
-        let backend = DelayedMutationKeychainBackend(saveDelay: 0.12)
+        // The save must still be in flight when the queued read runs, even on a
+        // heavily loaded CI runner - keep this window generous relative to the
+        // operation timeout.
+        let backend = DelayedMutationKeychainBackend(saveDelay: 1.5)
         let store = KeychainStore(
             service: "com.crawlio.browser-guide.tests.late-save",
             account: "temporary-test-key",
@@ -55,8 +58,8 @@ final class KeychainStoreTests: XCTestCase {
             call.capture { try store.saveAPIKey("sk-" + String(repeating: "c", count: 24)) }
         }
 
-        XCTAssertEqual(backend.saveStarted.wait(timeout: .now() + 1), .success)
-        XCTAssertEqual(call.finished.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(backend.saveStarted.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(call.finished.wait(timeout: .now() + 2), .success)
         XCTAssertEqual(call.error, .timedOut)
 
         // A read queued while the late save is still running must time out rather
@@ -65,7 +68,7 @@ final class KeychainStoreTests: XCTestCase {
             XCTAssertEqual(error as? KeychainStoreError, .timedOut)
         }
 
-        XCTAssertEqual(backend.deleteCompleted.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(backend.deleteCompleted.wait(timeout: .now() + 5), .success)
         XCTAssertNil(backend.storedValue)
         XCTAssertNil(try store.readAPIKey())
     }
