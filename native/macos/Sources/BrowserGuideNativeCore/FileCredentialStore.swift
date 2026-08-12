@@ -27,6 +27,9 @@ public protocol CredentialImporting: Sendable {
     /// Re-reads the harness source that produced the stored OpenAI credential
     /// (currently Codex). Returns true when a different key was found.
     func resyncOpenAICredentialFromSource() -> Bool
+    /// The stored Claude access token, re-synced from its source when near
+    /// expiry. Nil when no Claude sign-in was ever imported.
+    func freshAnthropicAccessToken(now: Date) throws -> String?
 }
 
 /// Harness-style credential storage: one JSON file with 0600 permissions,
@@ -40,19 +43,61 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
     private let storeURL: URL
     private let homeDirectory: URL
     private let legacyKeychain: KeychainStore?
+    private let claudeCodeKeychainData: @Sendable () -> Data?
 
     public init() {
         self.init(
             storeURL: Self.defaultStoreURL(),
             homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
-            legacyKeychain: KeychainStore()
+            legacyKeychain: KeychainStore(),
+            claudeCodeKeychainData: { Self.readClaudeCodeKeychainItem() }
         )
     }
 
-    init(storeURL: URL, homeDirectory: URL, legacyKeychain: KeychainStore?) {
+    init(
+        storeURL: URL,
+        homeDirectory: URL,
+        legacyKeychain: KeychainStore?,
+        claudeCodeKeychainData: @escaping @Sendable () -> Data? = { nil }
+    ) {
         self.storeURL = storeURL
         self.homeDirectory = homeDirectory
         self.legacyKeychain = legacyKeychain
+        self.claudeCodeKeychainData = claudeCodeKeychainData
+    }
+
+    /// On macOS, Claude Code keeps its OAuth credentials in the login Keychain
+    /// (`~/.claude/.credentials.json` is its Linux path) under services named
+    /// "Claude Code-credentials" plus per-profile suffixed variants. Items may
+    /// also hold only MCP-server tokens, so every candidate is parsed and the
+    /// sign-in with the latest expiry wins. Reading can trigger macOS's own
+    /// one-time consent prompt — exactly the user-visible boundary an import
+    /// should have.
+    static func readClaudeCodeKeychainItem() -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else { return nil }
+
+        var freshest: (expires: Double, payload: Data)?
+        for item in items {
+            guard let service = item[kSecAttrService as String] as? String,
+                  service.hasPrefix("Claude Code-credentials"),
+                  let payload = item[kSecValueData as String] as? Data,
+                  let object = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any],
+                  let oauth = object["claudeAiOauth"] as? [String: Any],
+                  oauth["accessToken"] is String else { continue }
+            let expires = (oauth["expiresAt"] as? NSNumber)?.doubleValue ?? 0
+            if freshest == nil || expires > freshest!.expires {
+                freshest = (expires, payload)
+            }
+        }
+        return freshest?.payload
     }
 
     public static func defaultStoreURL() -> URL {
@@ -139,13 +184,18 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
         let credentialsURL = homeDirectory
             .appendingPathComponent(".claude", isDirectory: true)
             .appendingPathComponent(".credentials.json", isDirectory: false)
-        guard FileManager.default.fileExists(atPath: credentialsURL.path) else {
+        let data: Data
+        if FileManager.default.fileExists(atPath: credentialsURL.path),
+           let fileData = try? Data(contentsOf: credentialsURL) {
+            data = fileData
+        } else if let keychainData = claudeCodeKeychainData() {
+            data = keychainData
+        } else {
             throw CredentialStoreError.importSourceMissing(
-                "No Claude Code sign-in was found (~/.claude/.credentials.json). Run `claude` and sign in first."
+                "No Claude Code sign-in was found (checked the login Keychain and ~/.claude/.credentials.json). Run `claude` and sign in first."
             )
         }
-        guard let data = try? Data(contentsOf: credentialsURL),
-              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let oauth = object["claudeAiOauth"] as? [String: Any],
               let accessToken = oauth["accessToken"] as? String,
               !accessToken.isEmpty else {

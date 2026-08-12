@@ -149,6 +149,32 @@ final class FileCredentialStoreTests: XCTestCase {
         XCTAssertFalse(store.resyncOpenAICredentialFromSource())
     }
 
+    func testImportsClaudeCodeFromTheKeychainWhenTheFileIsAbsent() throws {
+        let keychainPayload: [String: Any] = [
+            "claudeAiOauth": [
+                "accessToken": "sk-ant-oat-keychain",
+                "refreshToken": "sk-ant-ort-keychain",
+                "expiresAt": 1_900_000_000_000,
+            ],
+        ]
+        let payloadData = try JSONSerialization.data(withJSONObject: keychainPayload)
+        let store = FileCredentialStore(
+            storeURL: temporaryRoot.appendingPathComponent("credentials.json"),
+            homeDirectory: temporaryRoot,
+            legacyKeychain: nil,
+            claudeCodeKeychainData: { payloadData }
+        )
+
+        let outcome = try store.importCredentials(from: .claudeCode)
+        XCTAssertEqual(outcome.method, "oauth")
+
+        let raw = try Data(contentsOf: temporaryRoot.appendingPathComponent("credentials.json"))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: raw) as? [String: Any])
+        let anthropic = try XCTUnwrap(object["anthropic"] as? [String: Any])
+        XCTAssertEqual(anthropic["access"] as? String, "sk-ant-oat-keychain")
+        XCTAssertEqual(anthropic["source"] as? String, "claude-code")
+    }
+
     func testImportsClaudeCodeOAuthTokensWithoutTouchingOpenAI() throws {
         let claudeDirectory = temporaryRoot.appendingPathComponent(".claude", isDirectory: true)
         try FileManager.default.createDirectory(at: claudeDirectory, withIntermediateDirectories: true)
