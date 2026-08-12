@@ -3,21 +3,24 @@ import Foundation
 public struct BrowserGuideHostService: Sendable {
     private let keyStore: any APIKeyStoring
     private let importer: (any CredentialImporting)?
+    private let memory: SiteMemoryStore?
     private let realtimeClient: RealtimeClient
 
     public init(
         keyStore: any APIKeyStoring,
         importer: (any CredentialImporting)? = nil,
+        memory: SiteMemoryStore? = nil,
         realtimeClient: RealtimeClient = RealtimeClient()
     ) {
         self.keyStore = keyStore
         self.importer = importer
+        self.memory = memory
         self.realtimeClient = realtimeClient
     }
 
     public init(realtimeClient: RealtimeClient = RealtimeClient()) {
         let store = FileCredentialStore()
-        self.init(keyStore: store, importer: store, realtimeClient: realtimeClient)
+        self.init(keyStore: store, importer: store, memory: SiteMemoryStore(), realtimeClient: realtimeClient)
     }
 
     public func handle(_ request: HostRequest) async -> Data {
@@ -98,6 +101,18 @@ public struct BrowserGuideHostService: Sendable {
                 "configured": outcome.configured,
             ]
 
+        case .memoryGet(let origin) where request.type == .memoryGet:
+            let notes = (try? memory?.notes(for: origin)) ?? nil
+            return ["notes": notes ?? []]
+
+        case .memoryAppend(let origin, let question, let answer) where request.type == .memoryAppend:
+            try memory?.append(origin: origin, question: question, answer: answer)
+            return ["stored": true]
+
+        case .memoryClear(let origin) where request.type == .memoryClear:
+            try memory?.clear(origin: origin)
+            return ["cleared": true]
+
         case .createSession(let sdp, let mode) where request.type == .createSession:
             guard let apiKey = try keyStore.readAPIKey() else {
                 throw HostFailure(
@@ -107,7 +122,18 @@ public struct BrowserGuideHostService: Sendable {
                     requestID: request.requestID
                 )
             }
-            let result = try await realtimeClient.createSession(sdp: sdp, mode: mode, apiKey: apiKey)
+            let result: RealtimeSessionResult
+            do {
+                result = try await realtimeClient.createSession(sdp: sdp, mode: mode, apiKey: apiKey)
+            } catch RealtimeClientError.unauthorized {
+                // A rejected imported key may simply be stale: re-read the
+                // harness source once (Codex rotates its own key) and retry.
+                guard importer?.resyncOpenAICredentialFromSource() == true,
+                      let refreshedKey = try keyStore.readAPIKey() else {
+                    throw RealtimeClientError.unauthorized
+                }
+                result = try await realtimeClient.createSession(sdp: sdp, mode: mode, apiKey: refreshedKey)
+            }
             var data: [String: Any] = ["answerSdp": result.answerSDP]
             if let upstreamRequestID = result.upstreamRequestID {
                 data["upstreamRequestId"] = upstreamRequestID

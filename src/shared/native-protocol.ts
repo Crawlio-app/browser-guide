@@ -12,16 +12,29 @@ export const NATIVE_MAX_SDP_BYTES = 512 * 1_024;
 export const NATIVE_MAX_MODEL_BYTES = 120;
 export const NATIVE_MAX_ERROR_BYTES = 1_000;
 
+export const NATIVE_MAX_MEMORY_QUESTION_CHARS = 2_000;
+export const NATIVE_MAX_MEMORY_ANSWER_CHARS = 4_000;
+export const NATIVE_MAX_ORIGIN_CHARS = 500;
+
 export const NATIVE_TIMEOUT_MS = {
   connect: 3_000,
   health: 3_000,
   configure: 8_000,
   forget: 8_000,
   importCredentials: 8_000,
+  memory: 5_000,
   createSession: 30_000,
 } as const;
 
-export type NativeRequestType = "HOST_HEALTH" | "HOST_CONFIGURE_KEY" | "HOST_FORGET_KEY" | "HOST_CREATE_SESSION" | "HOST_IMPORT_CREDENTIALS";
+export type NativeRequestType =
+  | "HOST_HEALTH"
+  | "HOST_CONFIGURE_KEY"
+  | "HOST_FORGET_KEY"
+  | "HOST_CREATE_SESSION"
+  | "HOST_IMPORT_CREDENTIALS"
+  | "HOST_MEMORY_GET"
+  | "HOST_MEMORY_APPEND"
+  | "HOST_MEMORY_CLEAR";
 export type CredentialProvider = "codex" | "claude-code";
 export type RealtimeSessionMode = "text" | "voice";
 
@@ -30,7 +43,10 @@ export type NativeHostRequest =
   | { version: 1; requestId: string; type: "HOST_CONFIGURE_KEY"; payload: { key: string } }
   | { version: 1; requestId: string; type: "HOST_FORGET_KEY" }
   | { version: 1; requestId: string; type: "HOST_CREATE_SESSION"; payload: { sdp: string; mode: RealtimeSessionMode } }
-  | { version: 1; requestId: string; type: "HOST_IMPORT_CREDENTIALS"; payload: { provider: CredentialProvider } };
+  | { version: 1; requestId: string; type: "HOST_IMPORT_CREDENTIALS"; payload: { provider: CredentialProvider } }
+  | { version: 1; requestId: string; type: "HOST_MEMORY_GET"; payload: { origin: string } }
+  | { version: 1; requestId: string; type: "HOST_MEMORY_APPEND"; payload: { origin: string; question: string; answer: string } }
+  | { version: 1; requestId: string; type: "HOST_MEMORY_CLEAR"; payload?: { origin: string } };
 
 export interface NativeHealthData {
   ready: true;
@@ -58,12 +74,33 @@ export interface NativeImportData {
   configured: boolean;
 }
 
+export interface SiteMemoryNote {
+  q: string;
+  a: string;
+  at: number;
+}
+
+export interface NativeMemoryGetData {
+  notes: SiteMemoryNote[];
+}
+
+export interface NativeMemoryAppendData {
+  stored: true;
+}
+
+export interface NativeMemoryClearData {
+  cleared: true;
+}
+
 export type NativeSuccessData =
   | NativeHealthData
   | NativeConfigureData
   | NativeForgetData
   | NativeCreateSessionData
-  | NativeImportData;
+  | NativeImportData
+  | NativeMemoryGetData
+  | NativeMemoryAppendData
+  | NativeMemoryClearData;
 
 export const NATIVE_HOST_ERROR_CODES = [
   "INVALID_REQUEST",
@@ -95,6 +132,9 @@ export type HostBridgeRequest =
   | { type: "GUIDE_HOST_FORGET_KEY" }
   | { type: "GUIDE_HOST_CREATE_SESSION"; sdp: string; mode: RealtimeSessionMode }
   | { type: "GUIDE_HOST_IMPORT_CREDENTIALS"; provider: CredentialProvider }
+  | { type: "GUIDE_HOST_MEMORY_GET"; origin: string }
+  | { type: "GUIDE_HOST_MEMORY_APPEND"; origin: string; question: string; answer: string }
+  | { type: "GUIDE_HOST_MEMORY_CLEAR"; origin?: string }
   | { type: "GUIDE_HOST_DISCONNECT" };
 
 export type HostClientErrorCode = NativeHostErrorCode
@@ -141,6 +181,21 @@ export interface HostImportResponse {
   configured: boolean;
 }
 
+export interface HostMemoryGetResponse {
+  ok: true;
+  notes: SiteMemoryNote[];
+}
+
+export interface HostMemoryAppendResponse {
+  ok: true;
+  stored: true;
+}
+
+export interface HostMemoryClearResponse {
+  ok: true;
+  cleared: true;
+}
+
 export interface HostDisconnectResponse {
   ok: true;
 }
@@ -151,6 +206,9 @@ export type HostClientResponse = HostClientFailure
   | HostForgetResponse
   | HostCreateSessionResponse
   | HostImportResponse
+  | HostMemoryGetResponse
+  | HostMemoryAppendResponse
+  | HostMemoryClearResponse
   | HostDisconnectResponse;
 
 export function isHostBridgeRequest(value: unknown): value is HostBridgeRequest {
@@ -168,6 +226,16 @@ export function isHostBridgeRequest(value: unknown): value is HostBridgeRequest 
         && isSdp(value.sdp);
     case "GUIDE_HOST_IMPORT_CREDENTIALS":
       return hasExactKeys(value, ["type", "provider"]) && isCredentialProvider(value.provider);
+    case "GUIDE_HOST_MEMORY_GET":
+      return hasExactKeys(value, ["type", "origin"]) && isWebOrigin(value.origin);
+    case "GUIDE_HOST_MEMORY_APPEND":
+      return hasExactKeys(value, ["type", "origin", "question", "answer"])
+        && isWebOrigin(value.origin)
+        && isMemoryText(value.question, NATIVE_MAX_MEMORY_QUESTION_CHARS)
+        && isMemoryText(value.answer, NATIVE_MAX_MEMORY_ANSWER_CHARS);
+    case "GUIDE_HOST_MEMORY_CLEAR":
+      return hasExactKeys(value, ["type"], ["origin"])
+        && (value.origin === undefined || isWebOrigin(value.origin));
     default:
       return false;
   }
@@ -199,6 +267,24 @@ export function isNativeHostRequest(value: unknown): value is NativeHostRequest 
         && isRecord(value.payload)
         && hasExactKeys(value.payload, ["provider"])
         && isCredentialProvider(value.payload.provider);
+    case "HOST_MEMORY_GET":
+      return hasExactKeys(value, ["version", "requestId", "type", "payload"])
+        && isRecord(value.payload)
+        && hasExactKeys(value.payload, ["origin"])
+        && isWebOrigin(value.payload.origin);
+    case "HOST_MEMORY_APPEND":
+      return hasExactKeys(value, ["version", "requestId", "type", "payload"])
+        && isRecord(value.payload)
+        && hasExactKeys(value.payload, ["origin", "question", "answer"])
+        && isWebOrigin(value.payload.origin)
+        && isMemoryText(value.payload.question, NATIVE_MAX_MEMORY_QUESTION_CHARS)
+        && isMemoryText(value.payload.answer, NATIVE_MAX_MEMORY_ANSWER_CHARS);
+    case "HOST_MEMORY_CLEAR":
+      if (hasExactKeys(value, ["version", "requestId", "type"])) return true;
+      return hasExactKeys(value, ["version", "requestId", "type", "payload"])
+        && isRecord(value.payload)
+        && hasExactKeys(value.payload, ["origin"])
+        && isWebOrigin(value.payload.origin);
     default:
       return false;
   }
@@ -231,6 +317,12 @@ export function isNativeHostResponseFor(
       return isNativeCreateSessionData(value.data);
     case "HOST_IMPORT_CREDENTIALS":
       return isNativeImportData(value.data);
+    case "HOST_MEMORY_GET":
+      return isNativeMemoryGetData(value.data);
+    case "HOST_MEMORY_APPEND":
+      return isNativeMemoryAppendData(value.data);
+    case "HOST_MEMORY_CLEAR":
+      return isNativeMemoryClearData(value.data);
   }
 }
 
@@ -326,6 +418,70 @@ export function isHostImportResponse(value: unknown): value is HostImportRespons
     && typeof value.configured === "boolean");
 }
 
+export function isNativeMemoryGetData(value: unknown): value is NativeMemoryGetData {
+  return isRecord(value)
+    && hasExactKeys(value, ["notes"])
+    && Array.isArray(value.notes)
+    && value.notes.length <= 50
+    && value.notes.every(isSiteMemoryNote);
+}
+
+export function isNativeMemoryAppendData(value: unknown): value is NativeMemoryAppendData {
+  return isRecord(value) && value.stored === true && hasExactKeys(value, ["stored"]);
+}
+
+export function isNativeMemoryClearData(value: unknown): value is NativeMemoryClearData {
+  return isRecord(value) && value.cleared === true && hasExactKeys(value, ["cleared"]);
+}
+
+export function isSiteMemoryNote(value: unknown): value is SiteMemoryNote {
+  return isRecord(value)
+    && hasExactKeys(value, ["q", "a", "at"])
+    && typeof value.q === "string" && value.q.length <= NATIVE_MAX_MEMORY_QUESTION_CHARS
+    && typeof value.a === "string" && value.a.length <= NATIVE_MAX_MEMORY_ANSWER_CHARS
+    && typeof value.at === "number" && Number.isFinite(value.at);
+}
+
+export function isHostMemoryGetResponse(value: unknown): value is HostMemoryGetResponse | HostClientFailure {
+  return isHostClientFailure(value) || (isRecord(value)
+    && value.ok === true
+    && hasExactKeys(value, ["ok", "notes"])
+    && Array.isArray(value.notes)
+    && value.notes.length <= 50
+    && value.notes.every(isSiteMemoryNote));
+}
+
+export function isHostMemoryAppendResponse(value: unknown): value is HostMemoryAppendResponse | HostClientFailure {
+  return isHostClientFailure(value) || (isRecord(value)
+    && value.ok === true
+    && value.stored === true
+    && hasExactKeys(value, ["ok", "stored"]));
+}
+
+export function isHostMemoryClearResponse(value: unknown): value is HostMemoryClearResponse | HostClientFailure {
+  return isHostClientFailure(value) || (isRecord(value)
+    && value.ok === true
+    && value.cleared === true
+    && hasExactKeys(value, ["ok", "cleared"]));
+}
+
+export function isWebOrigin(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > NATIVE_MAX_ORIGIN_CHARS) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  return (parsed.protocol === "http:" || parsed.protocol === "https:")
+    && parsed.hostname.length > 0
+    && (parsed.pathname === "" || parsed.pathname === "/")
+    && parsed.search === ""
+    && parsed.hash === ""
+    && parsed.username === ""
+    && parsed.password === "";
+}
+
 export function isRequestId(value: unknown): value is string {
   return typeof value === "string"
     && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
@@ -358,6 +514,10 @@ function isHostClientErrorCode(value: unknown): value is HostClientErrorCode {
 
 function isSessionMode(value: unknown): value is RealtimeSessionMode {
   return value === "text" || value === "voice";
+}
+
+function isMemoryText(value: unknown, maximumChars: number): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= maximumChars;
 }
 
 function isApiKey(value: unknown): value is string {

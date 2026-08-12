@@ -31,6 +31,8 @@ process.stdin.on("end", () => {
   if (pending.length !== 0) process.exitCode = 20;
 });
 
+const memoryNotes = new Map();
+
 function respond(request) {
   const base = { version: 1, requestId: request.requestId, ok: true };
   switch (request.type) {
@@ -45,6 +47,22 @@ function respond(request) {
       break;
     case "HOST_FORGET_KEY":
       write({ ...base, data: { configured: false } });
+      break;
+    case "HOST_MEMORY_GET":
+      write({ ...base, data: { notes: memoryNotes.get(request.payload?.origin) ?? [] } });
+      break;
+    case "HOST_MEMORY_APPEND": {
+      const origin = request.payload?.origin;
+      const notes = memoryNotes.get(origin) ?? [];
+      notes.push({ q: String(request.payload?.question ?? "").slice(0, 300), a: String(request.payload?.answer ?? "").slice(0, 500), at: 0 });
+      memoryNotes.set(origin, notes.slice(-10));
+      write({ ...base, data: { stored: true } });
+      break;
+    }
+    case "HOST_MEMORY_CLEAR":
+      if (request.payload?.origin) memoryNotes.delete(request.payload.origin);
+      else memoryNotes.clear();
+      write({ ...base, data: { cleared: true } });
       break;
     default:
       write({

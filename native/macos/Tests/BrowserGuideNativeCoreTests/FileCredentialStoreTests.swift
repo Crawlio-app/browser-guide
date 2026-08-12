@@ -82,6 +82,73 @@ final class FileCredentialStoreTests: XCTestCase {
         }
     }
 
+    func testFreshAnthropicTokenReSyncsFromTheSourceWhenNearExpiry() throws {
+        let claudeDirectory = temporaryRoot.appendingPathComponent(".claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: claudeDirectory, withIntermediateDirectories: true)
+        let now = Date()
+        let freshExpiry = (now.timeIntervalSince1970 + 3_600) * 1_000
+
+        // Store holds a token that is about to expire; the source has a fresh one.
+        func writeSource(access: String, expires: Double) throws {
+            let credentials: [String: Any] = [
+                "claudeAiOauth": ["accessToken": access, "refreshToken": "r", "expiresAt": expires],
+            ]
+            try JSONSerialization.data(withJSONObject: credentials)
+                .write(to: claudeDirectory.appendingPathComponent(".credentials.json"))
+        }
+        let store = makeStore()
+        try writeSource(access: "stale-token", expires: (now.timeIntervalSince1970 + 60) * 1_000)
+        _ = try store.importCredentials(from: .claudeCode)
+        try writeSource(access: "fresh-token", expires: freshExpiry)
+
+        XCTAssertEqual(try store.freshAnthropicAccessToken(now: now), "fresh-token")
+    }
+
+    func testFreshAnthropicTokenExplainsWhenTheSourceIsAlsoExpired() throws {
+        let claudeDirectory = temporaryRoot.appendingPathComponent(".claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: claudeDirectory, withIntermediateDirectories: true)
+        let now = Date()
+        let expired = (now.timeIntervalSince1970 - 60) * 1_000
+        let credentials: [String: Any] = [
+            "claudeAiOauth": ["accessToken": "old", "refreshToken": "r", "expiresAt": expired],
+        ]
+        try JSONSerialization.data(withJSONObject: credentials)
+            .write(to: claudeDirectory.appendingPathComponent(".credentials.json"))
+        let store = makeStore()
+        _ = try store.importCredentials(from: .claudeCode)
+
+        XCTAssertThrowsError(try store.freshAnthropicAccessToken(now: now)) { error in
+            guard case .importSourceInvalid(let message)? = error as? CredentialStoreError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(message.contains("Open Claude Code"))
+        }
+    }
+
+    func testResyncOpenAIRefreshesOnlyCodexSourcedKeys() throws {
+        let codexDirectory = temporaryRoot.appendingPathComponent(".codex", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexDirectory, withIntermediateDirectories: true)
+        func writeAuth(_ key: String) throws {
+            try JSONSerialization.data(withJSONObject: ["OPENAI_API_KEY": key])
+                .write(to: codexDirectory.appendingPathComponent("auth.json"))
+        }
+        let store = makeStore()
+
+        // A manually pasted key must never be silently replaced.
+        try store.saveAPIKey("sk-" + String(repeating: "m", count: 24))
+        try writeAuth("sk-" + String(repeating: "n", count: 24))
+        XCTAssertFalse(store.resyncOpenAICredentialFromSource())
+        XCTAssertEqual(try store.readAPIKey(), "sk-" + String(repeating: "m", count: 24))
+
+        // A codex-sourced key re-syncs when the source rotated.
+        _ = try store.importCredentials(from: .codex)
+        try writeAuth("sk-" + String(repeating: "p", count: 24))
+        XCTAssertTrue(store.resyncOpenAICredentialFromSource())
+        XCTAssertEqual(try store.readAPIKey(), "sk-" + String(repeating: "p", count: 24))
+        // No rotation -> no change reported.
+        XCTAssertFalse(store.resyncOpenAICredentialFromSource())
+    }
+
     func testImportsClaudeCodeOAuthTokensWithoutTouchingOpenAI() throws {
         let claudeDirectory = temporaryRoot.appendingPathComponent(".claude", isDirectory: true)
         try FileManager.default.createDirectory(at: claudeDirectory, withIntermediateDirectories: true)
@@ -109,5 +176,76 @@ final class FileCredentialStoreTests: XCTestCase {
         XCTAssertEqual(anthropic["source"] as? String, "claude-code")
         XCTAssertEqual(anthropic["access"] as? String, "sk-ant-oat-token")
         XCTAssertEqual(anthropic["refresh"] as? String, "sk-ant-ort-token")
+    }
+}
+
+final class SiteMemoryStoreTests: XCTestCase {
+    private var temporaryRoot: URL!
+
+    override func setUpWithError() throws {
+        temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("browser-guide-memory-tests-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: temporaryRoot)
+    }
+
+    private func makeStore() -> SiteMemoryStore {
+        SiteMemoryStore(storeURL: temporaryRoot.appendingPathComponent("memory.json"))
+    }
+
+    func testAppendsRecallsAndTrimsNotesPerOrigin() throws {
+        let store = makeStore()
+        XCTAssertEqual(try store.notes(for: "https://example.test").count, 0)
+        for index in 1...12 {
+            try store.append(origin: "https://example.test", question: "q\(index)", answer: "a\(index)")
+        }
+        let notes = try store.notes(for: "https://example.test")
+        XCTAssertEqual(notes.count, SiteMemoryStore.maxNotesPerOrigin)
+        XCTAssertEqual(notes.first?["q"] as? String, "q3")
+        XCTAssertEqual(notes.last?["a"] as? String, "a12")
+    }
+
+    func testTruncatesOversizedEntriesAndKeepsFilePrivate() throws {
+        let store = makeStore()
+        try store.append(
+            origin: "https://example.test",
+            question: String(repeating: "q", count: 5_000),
+            answer: String(repeating: "a", count: 5_000)
+        )
+        let note = try XCTUnwrap(store.notes(for: "https://example.test").first)
+        XCTAssertEqual((note["q"] as? String)?.count, SiteMemoryStore.maxQuestionLength)
+        XCTAssertEqual((note["a"] as? String)?.count, SiteMemoryStore.maxAnswerLength)
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: temporaryRoot.appendingPathComponent("memory.json").path
+        )
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.int16Value, 0o600)
+    }
+
+    func testClearsOneOriginOrEverything() throws {
+        let store = makeStore()
+        try store.append(origin: "https://one.test", question: "q", answer: "a")
+        try store.append(origin: "https://two.test", question: "q", answer: "a")
+        try store.clear(origin: "https://one.test")
+        XCTAssertEqual(try store.notes(for: "https://one.test").count, 0)
+        XCTAssertEqual(try store.notes(for: "https://two.test").count, 1)
+        try store.clear(origin: nil)
+        XCTAssertEqual(try store.notes(for: "https://two.test").count, 0)
+    }
+
+    func testEvictsLeastRecentlyUsedOriginsBeyondTheCap() throws {
+        let store = makeStore()
+        for index in 0...SiteMemoryStore.maxOrigins {
+            try store.append(
+                origin: "https://site\(index).test",
+                question: "q",
+                answer: "a",
+                now: Date(timeIntervalSince1970: Double(index))
+            )
+        }
+        XCTAssertEqual(try store.notes(for: "https://site0.test").count, 0)
+        XCTAssertEqual(try store.notes(for: "https://site\(SiteMemoryStore.maxOrigins).test").count, 1)
     }
 }

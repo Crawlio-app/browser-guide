@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  NATIVE_MAX_MEMORY_ANSWER_CHARS,
   NATIVE_MAX_SDP_BYTES,
   isHostBridgeRequest,
   isHostConfigureResponse,
   isHostCreateSessionResponse,
   isHostHealthResponse,
+  isHostMemoryGetResponse,
   isNativeHostRequest,
   isNativeHostResponseFor,
+  isWebOrigin,
 } from "../../src/shared/native-protocol.js";
 
 const requestId = "123e4567-e89b-42d3-a456-426614174000";
@@ -94,5 +97,62 @@ describe("native messaging protocol", () => {
       retryable: true,
       permissionNeeded: true,
     })).toBe(true);
+  });
+
+  it("bounds the per-site memory messages to real web origins and sized text", () => {
+    const origin = "https://example.test";
+    expect(isNativeHostRequest({ version: 1, requestId, type: "HOST_MEMORY_GET", payload: { origin } })).toBe(true);
+    expect(isNativeHostRequest({
+      version: 1,
+      requestId,
+      type: "HOST_MEMORY_APPEND",
+      payload: { origin, question: "What is this page?", answer: "A billing dashboard." },
+    })).toBe(true);
+    expect(isNativeHostRequest({ version: 1, requestId, type: "HOST_MEMORY_CLEAR" })).toBe(true);
+    expect(isNativeHostRequest({ version: 1, requestId, type: "HOST_MEMORY_CLEAR", payload: { origin } })).toBe(true);
+
+    expect(isNativeHostRequest({ version: 1, requestId, type: "HOST_MEMORY_GET", payload: { origin: "chrome://settings" } })).toBe(false);
+    expect(isNativeHostRequest({ version: 1, requestId, type: "HOST_MEMORY_GET", payload: { origin: "https://example.test/path" } })).toBe(false);
+    expect(isNativeHostRequest({
+      version: 1,
+      requestId,
+      type: "HOST_MEMORY_APPEND",
+      payload: { origin, question: "", answer: "a" },
+    })).toBe(false);
+    expect(isNativeHostRequest({
+      version: 1,
+      requestId,
+      type: "HOST_MEMORY_APPEND",
+      payload: { origin, question: "q", answer: "a".repeat(NATIVE_MAX_MEMORY_ANSWER_CHARS + 1) },
+    })).toBe(false);
+    expect(isNativeHostRequest({
+      version: 1,
+      requestId,
+      type: "HOST_MEMORY_APPEND",
+      payload: { origin, question: "q", answer: "a", extra: true },
+    })).toBe(false);
+
+    expect(isHostBridgeRequest({ type: "GUIDE_HOST_MEMORY_GET", origin })).toBe(true);
+    expect(isHostBridgeRequest({ type: "GUIDE_HOST_MEMORY_APPEND", origin, question: "q", answer: "a" })).toBe(true);
+    expect(isHostBridgeRequest({ type: "GUIDE_HOST_MEMORY_CLEAR" })).toBe(true);
+    expect(isHostBridgeRequest({ type: "GUIDE_HOST_MEMORY_CLEAR", origin })).toBe(true);
+    expect(isHostBridgeRequest({ type: "GUIDE_HOST_MEMORY_GET", origin: "file:///etc" })).toBe(false);
+
+    const notes = { version: 1, requestId, ok: true, data: { notes: [{ q: "q", a: "a", at: 1 }] } };
+    expect(isNativeHostResponseFor(notes, "HOST_MEMORY_GET", requestId)).toBe(true);
+    expect(isNativeHostResponseFor(notes, "HOST_MEMORY_APPEND", requestId)).toBe(false);
+    expect(isNativeHostResponseFor({
+      version: 1,
+      requestId,
+      ok: true,
+      data: { notes: [{ q: "q", a: "a", at: 1, ref: "e12" }] },
+    }, "HOST_MEMORY_GET", requestId)).toBe(false);
+
+    expect(isHostMemoryGetResponse({ ok: true, notes: [] })).toBe(true);
+    expect(isHostMemoryGetResponse({ ok: true, notes: [{ q: "q", a: "a" }] })).toBe(false);
+
+    expect(isWebOrigin("http://localhost:4173")).toBe(true);
+    expect(isWebOrigin("https://user:pass@example.test")).toBe(false);
+    expect(isWebOrigin("https://example.test?q=1")).toBe(false);
   });
 });

@@ -24,6 +24,9 @@ public struct CredentialImportOutcome: Equatable, Sendable {
 
 public protocol CredentialImporting: Sendable {
     func importCredentials(from provider: CredentialProvider) throws -> CredentialImportOutcome
+    /// Re-reads the harness source that produced the stored OpenAI credential
+    /// (currently Codex). Returns true when a different key was found.
+    func resyncOpenAICredentialFromSource() -> Bool
 }
 
 /// Harness-style credential storage: one JSON file with 0600 permissions,
@@ -160,6 +163,46 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
         try upsert(provider: "anthropic", credential: credential)
         let configured = (try? readAPIKey()) != nil
         return CredentialImportOutcome(provider: .claudeCode, method: "oauth", configured: configured)
+    }
+
+    // MARK: - Source re-sync (freshness without our own OAuth refresh)
+
+    /// Five minutes, matching the early-expiry buffer Superset uses.
+    public static let tokenExpiryBufferMs: Double = 5 * 60 * 1_000
+
+    /// Returns a non-expired Anthropic access token. When the stored copy is
+    /// near expiry, the harness source file is re-read first — Claude Code
+    /// refreshes its own credentials, so re-syncing beats refreshing ourselves
+    /// (and never borrows someone else's OAuth client).
+    public func freshAnthropicAccessToken(now: Date = Date()) throws -> String? {
+        guard var anthropic = try loadStore()?["anthropic"] as? [String: Any] else { return nil }
+        if isExpired(anthropic, now: now) {
+            if (try? importClaudeCode()) != nil,
+               let refreshed = try loadStore()?["anthropic"] as? [String: Any] {
+                anthropic = refreshed
+            }
+            if isExpired(anthropic, now: now) {
+                throw CredentialStoreError.importSourceInvalid(
+                    "Your Claude sign-in expired. Open Claude Code once to refresh it, then try again."
+                )
+            }
+        }
+        return anthropic["access"] as? String
+    }
+
+    public func resyncOpenAICredentialFromSource() -> Bool {
+        guard let openai = (try? loadStore())?["openai"] as? [String: Any],
+              openai["source"] as? String == "codex-cli",
+              let previousKey = openai["key"] as? String else { return false }
+        guard (try? importCodex()) != nil,
+              let refreshed = (try? loadStore())?["openai"] as? [String: Any],
+              let refreshedKey = refreshed["key"] as? String else { return false }
+        return refreshedKey != previousKey
+    }
+
+    private func isExpired(_ credential: [String: Any], now: Date) -> Bool {
+        guard let expires = (credential["expires"] as? NSNumber)?.doubleValue else { return false }
+        return now.timeIntervalSince1970 * 1_000 >= expires - Self.tokenExpiryBufferMs
     }
 
     // MARK: - Keychain migration

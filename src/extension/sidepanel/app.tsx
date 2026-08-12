@@ -8,7 +8,11 @@ import {
   isHostForgetResponse,
   isHostHealthResponse,
   isHostImportResponse,
+  isHostMemoryClearResponse,
+  isHostMemoryGetResponse,
+  isWebOrigin,
   type CredentialProvider,
+  type SiteMemoryNote,
 } from "../../shared/native-protocol.js";
 import {
   isCaptureResponse,
@@ -117,6 +121,8 @@ function BrowserGuideApp(): React.ReactElement {
   const activeVoiceMode = useRef<GuideMode>("ask");
   const voiceContextOrigin = useRef<string | null>(null);
   const lastVoiceQuestion = useRef("");
+  const lastCaptureOrigin = useRef<string | null>(null);
+  const activeTurnQuestion = useRef("");
   const transientKeyInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -154,6 +160,7 @@ function BrowserGuideApp(): React.ReactElement {
       updateEntry(targetId, (entry) => ({ ...entry, question: final ? text : entry.question + text }));
       if (final) {
         lastVoiceQuestion.current = text;
+        activeTurnQuestion.current = text;
         voiceEntryId.current = null;
         if (activeVoiceMode.current === "walkthrough" && !walkthroughCoordinator.current.session && voiceContextOrigin.current) {
           walkthroughEntryId.current = targetId;
@@ -237,6 +244,9 @@ function BrowserGuideApp(): React.ReactElement {
         const completedEntryId = entryId;
         updateEntry(completedEntryId, (entry) => ({ ...entry, status: "complete" }));
         setLiveAnnouncement(finalAssistantText.current.slice(0, 500));
+        if (turn.mode !== "walkthrough" && lastCaptureOrigin.current) {
+          rememberSiteExchange(lastCaptureOrigin.current, activeTurnQuestion.current, finalAssistantText.current);
+        }
       }
       if (turn.status === "failed" && entryId) {
         updateEntry(entryId, (entry) => ({ ...entry, status: "failed", error: "The answer did not finish." }));
@@ -249,6 +259,7 @@ function BrowserGuideApp(): React.ReactElement {
       if (voiceEntryId.current === entryId) voiceEntryId.current = null;
       if (activeTurnId.current === turn.turnId) activeTurnId.current = null;
       finalAssistantText.current = "";
+      activeTurnQuestion.current = "";
     },
   }), [appendEntry, broker, updateEntry]);
 
@@ -304,13 +315,16 @@ function BrowserGuideApp(): React.ReactElement {
     }
     setPageTitle(response.context.title);
     activeEvidenceSnapshotId.current = response.context.snapshotId;
+    lastCaptureOrigin.current = response.context.origin;
+    // Best-effort local history for this site; the turn proceeds without it.
+    session.setSiteMemory(response.context.origin, await fetchSiteMemory(response.context.origin));
     if (shareVisual && response.context.visualOmission && response.context.visualOmission.reason !== "not-requested") {
       setIssue({ kind: "page", message: "The visual was omitted to stay within the privacy and size limit." });
     } else {
       setIssue((current) => current?.kind === "page" ? null : current);
     }
     return response.context;
-  }, [shareVisual]);
+  }, [session, shareVisual]);
 
   const submitQuestion = useCallback(async (override?: string, overrideMode?: GuideMode) => {
     const selectedMode = overrideMode ?? mode;
@@ -339,6 +353,7 @@ function BrowserGuideApp(): React.ReactElement {
     };
     appendEntry(entry);
     assistantEntryId.current = entryId;
+    activeTurnQuestion.current = cleanQuestion;
     setQuestion("");
     setIssue(null);
     try {
@@ -753,6 +768,26 @@ function BrowserGuideApp(): React.ReactElement {
     setLiveAnnouncement("");
   }, [stopWalkthrough]);
 
+  const clearSiteMemory = useCallback(async () => {
+    const origin = lastCaptureOrigin.current ?? runtimeRef.current.authorizedOrigin ?? undefined;
+    if (!window.confirm(origin
+      ? `Forget what Browser Guide remembers about ${origin}?`
+      : "Forget what Browser Guide remembers about every site?")) return;
+    try {
+      const response = await runtimeSend<unknown>(
+        origin ? { type: "GUIDE_HOST_MEMORY_CLEAR", origin } : { type: "GUIDE_HOST_MEMORY_CLEAR" },
+      );
+      if (!isHostMemoryClearResponse(response) || !response.ok) {
+        setIssue({ kind: "helper", message: hostError(response, "Site memory could not be cleared.") });
+        return;
+      }
+      session.setSiteMemory(null, []);
+      setLiveAnnouncement("Site memory cleared.");
+    } catch (error) {
+      setIssue({ kind: "helper", message: errorMessage(error, "Site memory could not be cleared.") });
+    }
+  }, [session]);
+
   const forgetKey = useCallback(async () => {
     if (!window.confirm("Remove the stored OpenAI credential from this Mac?")) return;
     const response = await runtimeSend<unknown>({ type: "GUIDE_HOST_FORGET_KEY" });
@@ -809,6 +844,7 @@ function BrowserGuideApp(): React.ReactElement {
         </div>
         <div className="instrument-actions">
           <button type="button" className="icon-button" onClick={() => void clearConversation()} aria-label="Clear session" title="Clear session"><ToolbarIcon kind="reset" /></button>
+          <button type="button" className="icon-button" onClick={() => void clearSiteMemory()} aria-label="Clear site memory" title="Clear site memory"><ToolbarIcon kind="memory" /></button>
           <button type="button" className="icon-button" onClick={() => void forgetKey()} aria-label="Forget API key" title="Forget API key"><ToolbarIcon kind="key" /></button>
         </div>
       </header>
@@ -1088,11 +1124,19 @@ function ModeIcon({ mode }: { mode: GuideMode }): React.ReactElement {
   return <span className="mode-icon steps" aria-hidden="true"><i /><i /></span>;
 }
 
-function ToolbarIcon({ kind }: { kind: "reset" | "key" }): React.ReactElement {
+function ToolbarIcon({ kind }: { kind: "reset" | "key" | "memory" }): React.ReactElement {
   if (kind === "reset") {
     return (
       <svg viewBox="0 0 20 20" aria-hidden="true">
         <path d="M5.6 6.2H2.8V3.4M3.1 6.1A7 7 0 1 1 3.7 15" />
+      </svg>
+    );
+  }
+  if (kind === "memory") {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="10" cy="10" r="6.6" />
+        <path d="M10 6.4V10l2.6 1.8" />
       </svg>
     );
   }
@@ -1193,6 +1237,32 @@ function runtimeSend<T = unknown>(message: unknown): Promise<T> {
       else resolve(response);
     });
   });
+}
+
+async function fetchSiteMemory(origin: string): Promise<SiteMemoryNote[]> {
+  if (!isWebOrigin(origin)) return [];
+  try {
+    const response = await withDeadline(
+      runtimeSend<unknown>({ type: "GUIDE_HOST_MEMORY_GET", origin }),
+      2_000,
+      "Site memory was not available in time.",
+    );
+    return isHostMemoryGetResponse(response) && response.ok ? response.notes : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberSiteExchange(origin: string, question: string, answer: string): void {
+  const cleanQuestion = question.trim().slice(0, 2_000);
+  const cleanAnswer = answer.trim().slice(0, 4_000);
+  if (!isWebOrigin(origin) || !cleanQuestion || !cleanAnswer) return;
+  void runtimeSend({
+    type: "GUIDE_HOST_MEMORY_APPEND",
+    origin,
+    question: cleanQuestion,
+    answer: cleanAnswer,
+  }).catch(() => undefined);
 }
 
 function requestPermission(permission: "nativeMessaging"): Promise<boolean> {

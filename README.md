@@ -19,7 +19,8 @@ Built by the makers of [Crawlio](https://www.crawlio.app). Where [Crawlio Browse
 - **Walkthrough** — select it and the tour starts by itself: a friendly compass companion walks you through the page one bounded step at a time, with progress and a **Next** button right on the page. **Done** closes the tour.
 - **Voice** — press the beacon (or `⌘⇧G` / `⌘⇧Space`) and talk; audio streams from your Mac directly to OpenAI over WebRTC. A **Speak** toggle reads typed answers aloud without using the microphone.
 - **Visual sharing, fail-closed** — screenshots are opt-in and omitted entirely whenever a visible input, code block, or likely-sensitive content is present.
-- **Harness-style credentials** — sign in by reusing your existing Codex or Claude Code login, or paste an OpenAI key. Credentials live in `~/.config/browser-guide/credentials.json` (0600) managed by the native helper — the same pattern Claude Code, Codex, and gh use. They never enter Chrome storage, source, logs, or command arguments.
+- **Harness-style credentials** — sign in by reusing your existing Codex or Claude Code login, or paste an OpenAI key. Credentials live in `~/.config/browser-guide/credentials.json` (0600) managed by the native helper — the same pattern Claude Code, Codex, and gh use. They never enter Chrome storage, source, logs, or command arguments. Imported sign-ins stay fresh by re-reading their source file (never by running OAuth flows of our own): a near-expiry Claude token re-syncs from `~/.claude/.credentials.json`, and a rejected Codex key re-reads `~/.codex/auth.json` once before failing.
+- **Per-site memory, local and bounded** — the guide remembers the last few question/answer pairs per site in `~/.config/browser-guide/memory.json` (0600, at most 10 notes per site and 50 sites) so follow-up questions have context. It is injected into prompts as explicitly untrusted history, never as instructions, and the panel's clock button clears the current site (or everything) at any time.
 - **Guided onboarding** — a permissions-first setup wizard opens on install and hands you to the [hosted guide](https://docs.crawlio.app/browser-guide/overview) the moment the one required permission is granted.
 
 ## The read-only guarantee
@@ -70,10 +71,11 @@ Then load the extension:
          │ WebRTC SDP offer            native messaging (stdio frames)
          ▼                                        ▼
    OpenAI Realtime  ◄──── session brokered ──── macOS helper (Swift)
-   (audio + text)          by the helper         credentials file (0600)
+   (audio + text)          by the helper         credentials + site
+                                                 memory files (0600)
 ```
 
-Page evidence and audio go directly from Chrome to OpenAI; the helper only creates sessions and never sees conversations, screenshots, or page content.
+Page evidence and audio go directly from Chrome to OpenAI; the helper creates sessions and stores the trimmed question/answer pairs that make up site memory, but never sees screenshots, page content, or the live conversation stream.
 
 ## Verification
 
@@ -81,7 +83,7 @@ Page evidence and audio go directly from Chrome to OpenAI; the helper only creat
 npm run verify:product
 ```
 
-Runs strict TypeScript checking, 84 unit/integration tests, a production build, native-helper validation, 27 Swift tests, native framing tests, secret and forbidden-capability guards, and 4 Chrome end-to-end tests covering typed questions, prerecorded voice, grounded pointing, and a three-step walkthrough driven by physical clicks on the overlay's own buttons.
+Runs strict TypeScript checking, 85 unit/integration tests, a production build, native-helper validation, 34 Swift tests, native framing tests, secret and forbidden-capability guards, and 4 Chrome end-to-end tests covering typed questions, prerecorded voice, grounded pointing, and a three-step walkthrough driven by physical clicks on the overlay's own buttons.
 
 `npm run verify` additionally runs the maintainer-only provenance sentinel, which requires a sibling checkout of the Crawlio Browser workspace.
 

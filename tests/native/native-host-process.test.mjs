@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 
@@ -144,6 +145,59 @@ test("health completes while an earlier Realtime session request is still blocke
   );
   assert.equal(result.messages.find(({ requestId }) => requestId === healthId).ok, true);
   assert.equal(result.messages.find(({ requestId }) => requestId === sessionId).ok, true);
+});
+
+test("per-site memory persists, recalls, and clears through the real helper process", async (context) => {
+  if (!existsSync(debugHost)) {
+    context.skip("Run swift build --package-path native/macos first.");
+    return;
+  }
+
+  const memoryPath = resolve(tmpdir(), `browser-guide-memory-probe-${process.pid}-${Date.now()}.json`);
+  const environment = {
+    ...process.env,
+    BROWSER_GUIDE_MEMORY_PATH: memoryPath,
+    BROWSER_GUIDE_CREDENTIALS_PATH: resolve(tmpdir(), `browser-guide-credentials-probe-${process.pid}.json`),
+  };
+  const origin = "https://memory-probe.test";
+  const appendId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const getId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const clearId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const emptyId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const rejectId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+
+  try {
+    const { messages, stderr } = await exchange([
+      {
+        version: 1,
+        requestId: appendId,
+        type: "HOST_MEMORY_APPEND",
+        payload: { origin, question: "What is this page?", answer: "A probe fixture." },
+      },
+      { version: 1, requestId: getId, type: "HOST_MEMORY_GET", payload: { origin } },
+      { version: 1, requestId: rejectId, type: "HOST_MEMORY_GET", payload: { origin: "chrome://settings" } },
+      { version: 1, requestId: clearId, type: "HOST_MEMORY_CLEAR", payload: { origin } },
+      { version: 1, requestId: emptyId, type: "HOST_MEMORY_GET", payload: { origin } },
+    ], debugHost, environment);
+
+    assert.equal(stderr, "");
+    assert.equal(messages.length, 5);
+    assert.deepEqual(messages.find(({ requestId }) => requestId === appendId).data, { stored: true });
+    const recalled = messages.find(({ requestId }) => requestId === getId);
+    assert.equal(recalled.ok, true);
+    assert.equal(recalled.data.notes.length, 1);
+    assert.equal(recalled.data.notes[0].q, "What is this page?");
+    assert.equal(recalled.data.notes[0].a, "A probe fixture.");
+    const rejected = messages.find(({ requestId }) => requestId === rejectId);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, "INVALID_REQUEST");
+    assert.deepEqual(messages.find(({ requestId }) => requestId === clearId).data, { cleared: true });
+    assert.deepEqual(messages.find(({ requestId }) => requestId === emptyId).data, { notes: [] });
+    const persisted = readFileSync(memoryPath, "utf8");
+    assert.ok(!persisted.includes("memory-probe.test"), "cleared origins must leave the file");
+  } finally {
+    rmSync(memoryPath, { force: true });
+  }
 });
 
 function exchange(requests, executable = host, environment = process.env) {

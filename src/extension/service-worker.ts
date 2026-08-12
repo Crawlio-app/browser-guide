@@ -269,6 +269,18 @@ async function handleHostBridgeRequest(message: HostBridgeRequest): Promise<Host
           configured: result.configured,
         };
       }
+      case "GUIDE_HOST_MEMORY_GET": {
+        const result = await nativeHost.memoryGet(message.origin);
+        return { ok: true, notes: result.notes };
+      }
+      case "GUIDE_HOST_MEMORY_APPEND": {
+        const result = await nativeHost.memoryAppend(message.origin, message.question, message.answer);
+        return { ok: true, stored: result.stored };
+      }
+      case "GUIDE_HOST_MEMORY_CLEAR": {
+        const result = await nativeHost.memoryClear(message.origin);
+        return { ok: true, cleared: result.cleared };
+      }
       case "GUIDE_HOST_CREATE_SESSION": {
         const result = await nativeHost.createSession(message.sdp, message.mode);
         return {

@@ -18,6 +18,9 @@ public enum HostRequestType: String, Sendable {
     case forgetKey = "HOST_FORGET_KEY"
     case createSession = "HOST_CREATE_SESSION"
     case importCredentials = "HOST_IMPORT_CREDENTIALS"
+    case memoryGet = "HOST_MEMORY_GET"
+    case memoryAppend = "HOST_MEMORY_APPEND"
+    case memoryClear = "HOST_MEMORY_CLEAR"
 }
 
 public enum RealtimeMode: String, Sendable {
@@ -30,6 +33,9 @@ public enum HostRequestPayload: Sendable, Equatable {
     case configureKey(String)
     case createSession(sdp: String, mode: RealtimeMode)
     case importCredentials(CredentialProvider)
+    case memoryGet(origin: String)
+    case memoryAppend(origin: String, question: String, answer: String)
+    case memoryClear(origin: String?)
 }
 
 public struct HostRequest: Sendable, Equatable {
@@ -142,6 +148,32 @@ public enum HostProtocolCodec {
             }
             return HostRequest(requestID: requestID, type: type, payload: .importCredentials(provider))
 
+        case .memoryGet:
+            let payload = try exactPayload(object["payload"], keys: ["origin"], requestID: requestID)
+            guard let origin = payload["origin"] as? String, isWebOrigin(origin) else {
+                throw invalid("The memory payload is invalid.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .memoryGet(origin: origin))
+
+        case .memoryAppend:
+            let payload = try exactPayload(object["payload"], keys: ["origin", "question", "answer"], requestID: requestID)
+            guard let origin = payload["origin"] as? String, isWebOrigin(origin),
+                  let question = payload["question"] as? String, !question.isEmpty, question.count <= 2_000,
+                  let answer = payload["answer"] as? String, !answer.isEmpty, answer.count <= 4_000 else {
+                throw invalid("The memory payload is invalid.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .memoryAppend(origin: origin, question: question, answer: answer))
+
+        case .memoryClear:
+            if object["payload"] == nil {
+                return HostRequest(requestID: requestID, type: type, payload: .memoryClear(origin: nil))
+            }
+            let payload = try exactPayload(object["payload"], keys: ["origin"], requestID: requestID)
+            guard let origin = payload["origin"] as? String, isWebOrigin(origin) else {
+                throw invalid("The memory payload is invalid.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .memoryClear(origin: origin))
+
         case .createSession:
             let payload = try exactPayload(object["payload"], keys: ["sdp", "mode"], requestID: requestID)
             guard let sdp = payload["sdp"] as? String,
@@ -213,6 +245,14 @@ public enum HostProtocolCodec {
             throw invalid("The native request payload contains missing or unsupported fields.", requestID: requestID)
         }
         return payload
+    }
+
+    private static func isWebOrigin(_ value: String) -> Bool {
+        guard value.count <= 500, let url = URL(string: value),
+              let scheme = url.scheme, scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty,
+              url.path.isEmpty || url.path == "/" else { return false }
+        return true
     }
 
     private static func validRequestID(_ raw: Any?) -> Bool {

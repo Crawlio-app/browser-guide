@@ -13,6 +13,9 @@ import {
   type NativeHealthData,
   type NativeHostRequest,
   type NativeHostResponse,
+  type NativeMemoryAppendData,
+  type NativeMemoryClearData,
+  type NativeMemoryGetData,
   type NativeRequestType,
   type NativeConfigureData,
   type NativeSuccessData,
@@ -64,6 +67,9 @@ interface NativeDataByRequest {
   HOST_FORGET_KEY: NativeForgetData;
   HOST_CREATE_SESSION: NativeCreateSessionData;
   HOST_IMPORT_CREDENTIALS: NativeImportData;
+  HOST_MEMORY_GET: NativeMemoryGetData;
+  HOST_MEMORY_APPEND: NativeMemoryAppendData;
+  HOST_MEMORY_CLEAR: NativeMemoryClearData;
 }
 
 export class NativeHostClientError extends Error {
@@ -130,6 +136,21 @@ export class NativeHostClient {
     return this.runBounded(request, NATIVE_TIMEOUT_MS.importCredentials);
   }
 
+  memoryGet(origin: string): Promise<NativeMemoryGetData> {
+    const request = this.makeRequest("HOST_MEMORY_GET", { origin });
+    return this.runBounded(request, NATIVE_TIMEOUT_MS.memory);
+  }
+
+  memoryAppend(origin: string, question: string, answer: string): Promise<NativeMemoryAppendData> {
+    const request = this.makeRequest("HOST_MEMORY_APPEND", { origin, question, answer });
+    return this.runBounded(request, NATIVE_TIMEOUT_MS.memory);
+  }
+
+  memoryClear(origin?: string): Promise<NativeMemoryClearData> {
+    const request = this.makeRequest("HOST_MEMORY_CLEAR", origin === undefined ? undefined : { origin });
+    return this.runBounded(request, NATIVE_TIMEOUT_MS.memory);
+  }
+
   disconnect(): void {
     this.generation += 1;
     this.connectionPromise = null;
@@ -159,8 +180,24 @@ export class NativeHostClient {
     payload: { provider: CredentialProvider },
   ): Extract<NativeHostRequest, { type: "HOST_IMPORT_CREDENTIALS" }>;
   private makeRequest(
+    type: "HOST_MEMORY_GET",
+    payload: { origin: string },
+  ): Extract<NativeHostRequest, { type: "HOST_MEMORY_GET" }>;
+  private makeRequest(
+    type: "HOST_MEMORY_APPEND",
+    payload: { origin: string; question: string; answer: string },
+  ): Extract<NativeHostRequest, { type: "HOST_MEMORY_APPEND" }>;
+  private makeRequest(
+    type: "HOST_MEMORY_CLEAR",
+    payload?: { origin: string },
+  ): Extract<NativeHostRequest, { type: "HOST_MEMORY_CLEAR" }>;
+  private makeRequest(
     type: NativeRequestType,
-    payload?: { key: string } | { sdp: string; mode: RealtimeSessionMode } | { provider: CredentialProvider },
+    payload?: { key: string }
+      | { sdp: string; mode: RealtimeSessionMode }
+      | { provider: CredentialProvider }
+      | { origin: string }
+      | { origin: string; question: string; answer: string },
   ): NativeHostRequest {
     const requestId = this.createRequestId();
     let request: NativeHostRequest;
@@ -189,6 +226,22 @@ export class NativeHostClient {
           type,
           payload: payload as { sdp: string; mode: RealtimeSessionMode },
         };
+        break;
+      case "HOST_MEMORY_GET":
+        request = { version: NATIVE_PROTOCOL_VERSION, requestId, type, payload: payload as { origin: string } };
+        break;
+      case "HOST_MEMORY_APPEND":
+        request = {
+          version: NATIVE_PROTOCOL_VERSION,
+          requestId,
+          type,
+          payload: payload as { origin: string; question: string; answer: string },
+        };
+        break;
+      case "HOST_MEMORY_CLEAR":
+        request = payload === undefined
+          ? { version: NATIVE_PROTOCOL_VERSION, requestId, type }
+          : { version: NATIVE_PROTOCOL_VERSION, requestId, type, payload: payload as { origin: string } };
         break;
     }
     if (!isNativeHostRequest(request)) {
