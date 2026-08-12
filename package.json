@@ -27,7 +27,8 @@
     "guard:forbidden": "node scripts/guard-forbidden.mjs",
     "guard:secrets": "node scripts/guard-secrets.mjs",
     "verify:parent": "node scripts/verify-parent.mjs",
-    "verify:product": "npm run typecheck && npm run test && npm run build && npm run validate:helper && npm run test:native && npm run test:e2e",
+    "test:mcp": "npm --prefix mcp test",
+    "verify:product": "npm run typecheck && npm run test && npm run build && npm run validate:helper && npm run test:native && npm run test:mcp && npm run test:e2e",
     "verify": "npm run verify:product && npm run verify:parent"
   },
   "dependencies": {

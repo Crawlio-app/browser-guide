@@ -15,6 +15,8 @@ try {
   await removeKnownRegistrationFiles();
   console.log("Browser Guide native host registration removed for this user.");
 }
+// The agent-eyes snapshot is only meaningful while the product is installed.
+await rm(resolve(homedir(), ".config/browser-guide/eyes.json"), { force: true });
 
 async function removeKnownRegistrationFiles() {
   const userHome = homedir();

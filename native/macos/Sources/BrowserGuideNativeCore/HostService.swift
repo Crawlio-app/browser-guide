@@ -4,23 +4,32 @@ public struct BrowserGuideHostService: Sendable {
     private let keyStore: any APIKeyStoring
     private let importer: (any CredentialImporting)?
     private let memory: SiteMemoryStore?
+    private let evidence: SharedEvidenceStore?
     private let realtimeClient: RealtimeClient
 
     public init(
         keyStore: any APIKeyStoring,
         importer: (any CredentialImporting)? = nil,
         memory: SiteMemoryStore? = nil,
+        evidence: SharedEvidenceStore? = nil,
         realtimeClient: RealtimeClient = RealtimeClient()
     ) {
         self.keyStore = keyStore
         self.importer = importer
         self.memory = memory
+        self.evidence = evidence
         self.realtimeClient = realtimeClient
     }
 
     public init(realtimeClient: RealtimeClient = RealtimeClient()) {
         let store = FileCredentialStore()
-        self.init(keyStore: store, importer: store, memory: SiteMemoryStore(), realtimeClient: realtimeClient)
+        self.init(
+            keyStore: store,
+            importer: store,
+            memory: SiteMemoryStore(),
+            evidence: SharedEvidenceStore(),
+            realtimeClient: realtimeClient
+        )
     }
 
     public func handle(_ request: HostRequest) async -> Data {
@@ -111,6 +120,14 @@ public struct BrowserGuideHostService: Sendable {
 
         case .memoryClear(let origin) where request.type == .memoryClear:
             try memory?.clear(origin: origin)
+            return ["cleared": true]
+
+        case .publishEvidence(let origin, let title, let pageEvidence) where request.type == .publishEvidence:
+            try evidence?.publish(origin: origin, title: title, evidence: pageEvidence)
+            return ["published": true]
+
+        case .none where request.type == .clearEvidence:
+            evidence?.clear()
             return ["cleared": true]
 
         case .createSession(let sdp, let mode) where request.type == .createSession:

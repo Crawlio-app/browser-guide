@@ -376,6 +376,18 @@ input:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+.eyes-indicator {
+  padding: 2px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 .instrument-actions {
   display: flex;
   align-items: center;

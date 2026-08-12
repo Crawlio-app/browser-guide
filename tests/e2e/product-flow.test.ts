@@ -175,6 +175,19 @@ describe.skipIf(!existsSync(chromiumPath))("controlled full product flow", () =>
     sidePanelPage.on("pageerror", (error) => pageErrors.push(error.message));
     fixturePage.on("pageerror", (error) => pageErrors.push(error.message));
 
+    // Agent eyes consent: OFF by default, no indicator until the user opts in,
+    // and turning it off again removes the visible indicator.
+    await expect.poll(() => sidePanelPage?.locator(".eyes-toggle input").isChecked()).toBe(false);
+    expect(await sidePanelPage.locator(".eyes-indicator").count()).toBe(0);
+    await sidePanelPage.locator(".eyes-toggle input").evaluate((element) => {
+      (element as HTMLInputElement).click();
+    });
+    await expect.poll(() => sidePanelPage?.locator(".eyes-indicator").count(), { timeout: 5_000 }).toBe(1);
+    await sidePanelPage.locator(".eyes-toggle input").evaluate((element) => {
+      (element as HTMLInputElement).click();
+    });
+    await expect.poll(() => sidePanelPage?.locator(".eyes-indicator").count(), { timeout: 5_000 }).toBe(0);
+
     await submitFromBackground(sidePanelPage, fixturePage, "Where do I review invoices?");
     await expect.poll(() => sidePanelPage?.locator(".guide-answer").last().innerText(), { timeout: 5_000 }).toContain("Review invoices is highlighted");
     await expect.poll(() => fixturePage?.locator("[data-browser-guide-root]").getAttribute("data-guide-visible"), { timeout: 5_000 }).toBe("true");

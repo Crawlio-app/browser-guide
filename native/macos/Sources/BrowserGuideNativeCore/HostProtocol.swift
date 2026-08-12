@@ -21,6 +21,8 @@ public enum HostRequestType: String, Sendable {
     case memoryGet = "HOST_MEMORY_GET"
     case memoryAppend = "HOST_MEMORY_APPEND"
     case memoryClear = "HOST_MEMORY_CLEAR"
+    case publishEvidence = "HOST_PUBLISH_EVIDENCE"
+    case clearEvidence = "HOST_CLEAR_EVIDENCE"
 }
 
 public enum RealtimeMode: String, Sendable {
@@ -36,6 +38,7 @@ public enum HostRequestPayload: Sendable, Equatable {
     case memoryGet(origin: String)
     case memoryAppend(origin: String, question: String, answer: String)
     case memoryClear(origin: String?)
+    case publishEvidence(origin: String, title: String, evidence: String)
 }
 
 public struct HostRequest: Sendable, Equatable {
@@ -121,11 +124,21 @@ public enum HostProtocolCodec {
         }
 
         switch type {
-        case .health, .forgetKey:
+        case .health, .forgetKey, .clearEvidence:
             guard object["payload"] == nil else {
                 throw invalid("This native request must omit payload.", requestID: requestID)
             }
             return HostRequest(requestID: requestID, type: type, payload: .none)
+
+        case .publishEvidence:
+            let payload = try exactPayload(object["payload"], keys: ["origin", "title", "evidence"], requestID: requestID)
+            guard let origin = payload["origin"] as? String, isWebOrigin(origin),
+                  let title = payload["title"] as? String, title.count <= SharedEvidenceStore.maxTitleLength,
+                  let evidence = payload["evidence"] as? String, !evidence.isEmpty,
+                  evidence.count <= SharedEvidenceStore.maxEvidenceLength else {
+                throw invalid("The evidence payload is invalid.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .publishEvidence(origin: origin, title: title, evidence: evidence))
 
         case .configureKey:
             let payload = try exactPayload(object["payload"], keys: ["key"], requestID: requestID)

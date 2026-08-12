@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { GuidanceCommand, ShowGuidanceCommand } from "../../shared/assistant-contract.js";
-import { isPageContext, type PageContext } from "../../shared/page-context.js";
+import { contextForModel, isPageContext, type PageContext } from "../../shared/page-context.js";
+import { sanitizePageContext } from "../../shared/sanitization.js";
 import {
   isHostConfigureResponse,
   isHostCreateSessionResponse,
@@ -104,6 +105,7 @@ function BrowserGuideApp(): React.ReactElement {
   const [issue, setIssue] = useState<UiIssue | null>(null);
   const [shareVisual, setShareVisual] = useState(false);
   const [speakAnswers, setSpeakAnswers] = useState(false);
+  const [agentEyes, setAgentEyes] = useState(false);
   const [keyPresent, setKeyPresent] = useState(false);
   const [keyBusy, setKeyBusy] = useState(false);
   const [lastGuidance, setLastGuidance] = useState<LastGuidance | null>(null);
@@ -318,13 +320,28 @@ function BrowserGuideApp(): React.ReactElement {
     lastCaptureOrigin.current = response.context.origin;
     // Best-effort local history for this site; the turn proceeds without it.
     session.setSiteMemory(response.context.origin, await fetchSiteMemory(response.context.origin));
+    if (agentEyes) publishAgentEyes(response.context);
     if (shareVisual && response.context.visualOmission && response.context.visualOmission.reason !== "not-requested") {
       setIssue({ kind: "page", message: "The visual was omitted to stay within the privacy and size limit." });
     } else {
       setIssue((current) => current?.kind === "page" ? null : current);
     }
     return response.context;
-  }, [session, shareVisual]);
+  }, [agentEyes, session, shareVisual]);
+
+  const toggleAgentEyes = useCallback(() => {
+    setAgentEyes((current) => {
+      const next = !current;
+      if (!next) {
+        // OFF deletes the snapshot file; absence is the fail-closed state.
+        void runtimeSend({ type: "GUIDE_HOST_CLEAR_EVIDENCE" }).catch(() => undefined);
+        setLiveAnnouncement("Agent eyes off. The shared snapshot was deleted.");
+      } else {
+        setLiveAnnouncement("Agent eyes on. The next captured page is shared with your local coding agents.");
+      }
+      return next;
+    });
+  }, []);
 
   const submitQuestion = useCallback(async (override?: string, overrideMode?: GuideMode) => {
     const selectedMode = overrideMode ?? mode;
@@ -841,6 +858,7 @@ function BrowserGuideApp(): React.ReactElement {
           <span className="beacon-dot" aria-hidden="true" />
           <span>{toolbarState}</span>
           {walkthrough && <span className="step-count">{walkthrough.step}/12</span>}
+          {agentEyes && <span className="eyes-indicator" role="status" title="Local coding agents can read the captured page snapshot">Eyes on</span>}
         </div>
         <div className="instrument-actions">
           <button type="button" className="icon-button" onClick={() => void clearConversation()} aria-label="Clear session" title="Clear session"><ToolbarIcon kind="reset" /></button>
@@ -978,6 +996,10 @@ function BrowserGuideApp(): React.ReactElement {
           <label className="visual-toggle">
             <input type="checkbox" checked={shareVisual} onChange={(event) => setShareVisual(event.currentTarget.checked)} />
             <span>Visual</span>
+          </label>
+          <label className="visual-toggle eyes-toggle" title="Share the current page snapshot with local coding agents (Claude Code, Codex) through a private local file. Off deletes it.">
+            <input type="checkbox" checked={agentEyes} onChange={toggleAgentEyes} />
+            <span>Eyes</span>
           </label>
         </div>
         <form className="composer" onSubmit={(event) => {
@@ -1251,6 +1273,18 @@ async function fetchSiteMemory(origin: string): Promise<SiteMemoryNote[]> {
   } catch {
     return [];
   }
+}
+
+function publishAgentEyes(context: PageContext): void {
+  const safe = sanitizePageContext(context);
+  const evidence = JSON.stringify(contextForModel(safe)).slice(0, 200_000);
+  if (!isWebOrigin(safe.origin) || !evidence) return;
+  void runtimeSend({
+    type: "GUIDE_HOST_PUBLISH_EVIDENCE",
+    origin: safe.origin,
+    title: safe.title.slice(0, 300),
+    evidence,
+  }).catch(() => undefined);
 }
 
 function rememberSiteExchange(origin: string, question: string, answer: string): void {

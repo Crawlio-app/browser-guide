@@ -1,0 +1,36 @@
+{
+  "name": "crawlio-browser-guide",
+  "version": "0.5.0",
+  "description": "Local MCP eyes for Crawlio Browser Guide: lets Claude Code and Codex read the page snapshot the user chose to share. Read-only by construction.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "crawlio-browser-guide": "bin/crawlio-browser-guide.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Crawlio-app/browser-guide.git",
+    "directory": "mcp"
+  },
+  "keywords": [
+    "mcp",
+    "chrome-extension",
+    "crawlio",
+    "browser-guide",
+    "read-only"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

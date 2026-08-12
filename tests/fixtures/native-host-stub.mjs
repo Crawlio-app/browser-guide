@@ -64,6 +64,12 @@ function respond(request) {
       else memoryNotes.clear();
       write({ ...base, data: { cleared: true } });
       break;
+    case "HOST_PUBLISH_EVIDENCE":
+      write({ ...base, data: { published: true } });
+      break;
+    case "HOST_CLEAR_EVIDENCE":
+      write({ ...base, data: { cleared: true } });
+      break;
     default:
       write({
         version: 1,

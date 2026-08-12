@@ -39,6 +39,9 @@ jobs:
       - name: Swift and native host tests
         run: npm run test:native
 
+      - name: MCP server tests
+        run: npm --prefix mcp ci && npm run test:mcp
+
       - name: Forbidden-capability and secret guards
         run: npm run guard:forbidden && npm run guard:secrets
 

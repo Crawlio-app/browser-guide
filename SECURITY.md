@@ -12,6 +12,7 @@ Reports we especially care about:
 - Screenshot fail-closed bypasses: a capture succeeding while sensitive content is visible.
 - Native messaging host impersonation or unauthorized extension origins reaching the helper.
 - Site-memory boundary escapes: `~/.config/browser-guide/memory.json` accepting non-web origins or unbounded content, memory leaving the machine, or remembered history being treated as instructions rather than untrusted context.
+- Agent-eyes consent bypasses: the evidence snapshot (`~/.config/browser-guide/eyes.json`) being written while the Eyes toggle is off, surviving toggle-off or uninstall, containing screenshots or unsanitized content, or the MCP server exposing anything beyond that single read-only snapshot.
 
 ## Threat model notes
 

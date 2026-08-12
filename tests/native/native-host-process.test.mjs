@@ -200,6 +200,59 @@ test("per-site memory persists, recalls, and clears through the real helper proc
   }
 });
 
+test("agent-eyes evidence publishes to a private snapshot file and clears to absence", async (context) => {
+  if (!existsSync(debugHost)) {
+    context.skip("Run swift build --package-path native/macos first.");
+    return;
+  }
+
+  const eyesPath = resolve(tmpdir(), `browser-guide-eyes-probe-${process.pid}-${Date.now()}.json`);
+  const environment = {
+    ...process.env,
+    BROWSER_GUIDE_EYES_PATH: eyesPath,
+    BROWSER_GUIDE_CREDENTIALS_PATH: resolve(tmpdir(), `browser-guide-credentials-probe-${process.pid}.json`),
+    BROWSER_GUIDE_MEMORY_PATH: resolve(tmpdir(), `browser-guide-memory-probe-${process.pid}.json`),
+  };
+  const publishId = "0aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa0";
+  const clearId = "0bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb0";
+  const rejectId = "0ccccccc-cccc-4ccc-8ccc-ccccccccccc0";
+
+  try {
+    const first = await exchange([
+      {
+        version: 1,
+        requestId: publishId,
+        type: "HOST_PUBLISH_EVIDENCE",
+        payload: { origin: "https://eyes-probe.test", title: "Probe page", evidence: "{\"elements\":[]}" },
+      },
+      {
+        version: 1,
+        requestId: rejectId,
+        type: "HOST_PUBLISH_EVIDENCE",
+        payload: { origin: "chrome://settings", title: "Nope", evidence: "{}" },
+      },
+    ], debugHost, environment);
+    assert.equal(first.stderr, "");
+    assert.deepEqual(first.messages.find(({ requestId }) => requestId === publishId).data, { published: true });
+    assert.equal(first.messages.find(({ requestId }) => requestId === rejectId).error.code, "INVALID_REQUEST");
+
+    const snapshot = JSON.parse(readFileSync(eyesPath, "utf8"));
+    assert.equal(snapshot.version, 1);
+    assert.equal(snapshot.origin, "https://eyes-probe.test");
+    assert.equal(snapshot.title, "Probe page");
+    assert.equal(snapshot.evidence, "{\"elements\":[]}");
+    assert.equal(typeof snapshot.captured_at, "number");
+
+    const second = await exchange([
+      { version: 1, requestId: clearId, type: "HOST_CLEAR_EVIDENCE" },
+    ], debugHost, environment);
+    assert.deepEqual(second.messages.find(({ requestId }) => requestId === clearId).data, { cleared: true });
+    assert.equal(existsSync(eyesPath), false, "clearing must delete the snapshot file");
+  } finally {
+    rmSync(eyesPath, { force: true });
+  }
+});
+
 function exchange(requests, executable = host, environment = process.env) {
   return exchangeUntilMessageCount(requests, requests.length, executable, environment);
 }

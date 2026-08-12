@@ -249,3 +249,43 @@ final class SiteMemoryStoreTests: XCTestCase {
         XCTAssertEqual(try store.notes(for: "https://site\(SiteMemoryStore.maxOrigins).test").count, 1)
     }
 }
+
+final class SharedEvidenceStoreTests: XCTestCase {
+    private var temporaryRoot: URL!
+
+    override func setUpWithError() throws {
+        temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("browser-guide-evidence-tests-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: temporaryRoot)
+    }
+
+    func testPublishesABoundedPrivateSnapshotAndClearsToAbsence() throws {
+        let storeURL = temporaryRoot.appendingPathComponent("eyes.json")
+        let store = SharedEvidenceStore(storeURL: storeURL)
+        let capturedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try store.publish(
+            origin: "https://example.test",
+            title: String(repeating: "t", count: 1_000),
+            evidence: "{\"elements\":[]}",
+            now: capturedAt
+        )
+
+        let raw = try Data(contentsOf: storeURL)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: raw) as? [String: Any])
+        XCTAssertEqual(object["version"] as? Int, 1)
+        XCTAssertEqual(object["origin"] as? String, "https://example.test")
+        XCTAssertEqual((object["title"] as? String)?.count, SharedEvidenceStore.maxTitleLength)
+        XCTAssertEqual(object["evidence"] as? String, "{\"elements\":[]}")
+        XCTAssertEqual(object["captured_at"] as? Double, 1_700_000_000)
+        let attributes = try FileManager.default.attributesOfItem(atPath: storeURL.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.int16Value, 0o600)
+
+        store.clear()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: storeURL.path))
+        store.clear() // Clearing an already-absent snapshot stays silent.
+    }
+}

@@ -86,6 +86,7 @@ struct BrowserGuideNativeHost {
         let keyStore: any APIKeyStoring = useMemoryStore ? DebugMemoryKeyStore() : fileStore
         let importer: (any CredentialImporting)? = useMemoryStore ? nil : fileStore
         let memory: SiteMemoryStore? = useMemoryStore ? nil : SiteMemoryStore()
+        let evidence: SharedEvidenceStore? = useMemoryStore ? nil : SharedEvidenceStore()
         if let rawDelay = environment["BROWSER_GUIDE_TEST_REALTIME_DELAY_MILLISECONDS"],
            let delayMilliseconds = UInt64(rawDelay),
            (1...10_000).contains(delayMilliseconds) {
@@ -93,13 +94,14 @@ struct BrowserGuideNativeHost {
                 keyStore: keyStore,
                 importer: importer,
                 memory: memory,
+                evidence: evidence,
                 realtimeClient: RealtimeClient(
                     transport: DebugDelayedRealtimeTransport(delayMilliseconds: delayMilliseconds),
                     timeoutSeconds: 20
                 )
             )
         }
-        return BrowserGuideHostService(keyStore: keyStore, importer: importer, memory: memory)
+        return BrowserGuideHostService(keyStore: keyStore, importer: importer, memory: memory, evidence: evidence)
         #else
         return BrowserGuideHostService()
         #endif

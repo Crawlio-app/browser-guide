@@ -21,6 +21,7 @@ Built by the makers of [Crawlio](https://www.crawlio.app). Where [Crawlio Browse
 - **Visual sharing, fail-closed** — screenshots are opt-in and omitted entirely whenever a visible input, code block, or likely-sensitive content is present.
 - **Harness-style credentials** — sign in by reusing your existing Codex or Claude Code login, or paste an OpenAI key. Credentials live in `~/.config/browser-guide/credentials.json` (0600) managed by the native helper — the same pattern Claude Code, Codex, and gh use. They never enter Chrome storage, source, logs, or command arguments. Imported sign-ins stay fresh by re-reading their source file (never by running OAuth flows of our own): a near-expiry Claude token re-syncs from `~/.claude/.credentials.json`, and a rejected Codex key re-reads `~/.codex/auth.json` once before failing.
 - **Per-site memory, local and bounded** — the guide remembers the last few question/answer pairs per site in `~/.config/browser-guide/memory.json` (0600, at most 10 notes per site and 50 sites) so follow-up questions have context. It is injected into prompts as explicitly untrusted history, never as instructions, and the panel's clock button clears the current site (or everything) at any time.
+- **Agent eyes (MCP), opt-in** — an **Eyes** toggle (off by default, with a visible "Eyes on" badge while active) shares the sanitized snapshot of the current page through `~/.config/browser-guide/eyes.json` (0600), so Claude Code, Codex, or any MCP client can *see* what you see via the bundled [`crawlio-browser-guide` MCP server](mcp/) — and still cannot act on anything. Toggling off deletes the file.
 - **Guided onboarding** — a permissions-first setup wizard opens on install and hands you to the [hosted guide](https://docs.crawlio.app/browser-guide/overview) the moment the one required permission is granted.
 
 ## The read-only guarantee
@@ -60,6 +61,16 @@ Then load the extension:
 
 `npm run install:helper` registers the native messaging host for Chrome and Chrome for Testing at user level only. Remove it anytime with `npm run uninstall:helper`.
 
+### Lend your coding agent the same eyes (optional)
+
+Turn on the **Eyes** toggle in the panel, then register the read-only MCP server with your agent:
+
+```sh
+claude mcp add browser-guide -- npx -y crawlio-browser-guide mcp
+```
+
+Your agent gains one tool, `get_current_page`, that returns the shared snapshot with its capture time — nothing else. See [mcp/README.md](mcp/README.md).
+
 ## Architecture
 
 ```
@@ -71,8 +82,11 @@ Then load the extension:
          │ WebRTC SDP offer            native messaging (stdio frames)
          ▼                                        ▼
    OpenAI Realtime  ◄──── session brokered ──── macOS helper (Swift)
-   (audio + text)          by the helper         credentials + site
-                                                 memory files (0600)
+   (audio + text)          by the helper         credentials · memory ·
+                                                 eyes snapshot (0600)
+                                                        ▲ read-only
+                                             crawlio-browser-guide MCP
+                                             (Claude Code / Codex eyes)
 ```
 
 Page evidence and audio go directly from Chrome to OpenAI; the helper creates sessions and stores the trimmed question/answer pairs that make up site memory, but never sees screenshots, page content, or the live conversation stream.
@@ -83,7 +97,7 @@ Page evidence and audio go directly from Chrome to OpenAI; the helper creates se
 npm run verify:product
 ```
 
-Runs strict TypeScript checking, 85 unit/integration tests, a production build, native-helper validation, 34 Swift tests, native framing tests, secret and forbidden-capability guards, and 4 Chrome end-to-end tests covering typed questions, prerecorded voice, grounded pointing, and a three-step walkthrough driven by physical clicks on the overlay's own buttons.
+Runs strict TypeScript checking, 86 unit/integration tests, a production build, native-helper validation, 35 Swift tests, native framing and MCP server process tests, secret and forbidden-capability guards, and 4 Chrome end-to-end tests covering typed questions, prerecorded voice, grounded pointing, and a three-step walkthrough driven by physical clicks on the overlay's own buttons.
 
 `npm run verify` additionally runs the maintainer-only provenance sentinel, which requires a sibling checkout of the Crawlio Browser workspace.
 

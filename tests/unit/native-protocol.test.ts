@@ -155,4 +155,37 @@ describe("native messaging protocol", () => {
     expect(isWebOrigin("https://user:pass@example.test")).toBe(false);
     expect(isWebOrigin("https://example.test?q=1")).toBe(false);
   });
+
+  it("bounds the agent-eyes evidence messages and their results", () => {
+    const origin = "https://example.test";
+    expect(isNativeHostRequest({
+      version: 1,
+      requestId,
+      type: "HOST_PUBLISH_EVIDENCE",
+      payload: { origin, title: "Dashboard", evidence: "{\"elements\":[]}" },
+    })).toBe(true);
+    expect(isNativeHostRequest({ version: 1, requestId, type: "HOST_CLEAR_EVIDENCE" })).toBe(true);
+
+    expect(isNativeHostRequest({
+      version: 1,
+      requestId,
+      type: "HOST_PUBLISH_EVIDENCE",
+      payload: { origin: "chrome://settings", title: "t", evidence: "{}" },
+    })).toBe(false);
+    expect(isNativeHostRequest({
+      version: 1,
+      requestId,
+      type: "HOST_PUBLISH_EVIDENCE",
+      payload: { origin, title: "t", evidence: "" },
+    })).toBe(false);
+    expect(isNativeHostRequest({ version: 1, requestId, type: "HOST_CLEAR_EVIDENCE", payload: {} })).toBe(false);
+
+    expect(isHostBridgeRequest({ type: "GUIDE_HOST_PUBLISH_EVIDENCE", origin, title: "t", evidence: "{}" })).toBe(true);
+    expect(isHostBridgeRequest({ type: "GUIDE_HOST_CLEAR_EVIDENCE" })).toBe(true);
+    expect(isHostBridgeRequest({ type: "GUIDE_HOST_PUBLISH_EVIDENCE", origin, title: "t", evidence: "{}", extra: 1 })).toBe(false);
+
+    const published = { version: 1, requestId, ok: true, data: { published: true } };
+    expect(isNativeHostResponseFor(published, "HOST_PUBLISH_EVIDENCE", requestId)).toBe(true);
+    expect(isNativeHostResponseFor(published, "HOST_CLEAR_EVIDENCE", requestId)).toBe(false);
+  });
 });

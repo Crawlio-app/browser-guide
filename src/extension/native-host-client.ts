@@ -13,9 +13,11 @@ import {
   type NativeHealthData,
   type NativeHostRequest,
   type NativeHostResponse,
+  type NativeClearEvidenceData,
   type NativeMemoryAppendData,
   type NativeMemoryClearData,
   type NativeMemoryGetData,
+  type NativePublishEvidenceData,
   type NativeRequestType,
   type NativeConfigureData,
   type NativeSuccessData,
@@ -70,6 +72,8 @@ interface NativeDataByRequest {
   HOST_MEMORY_GET: NativeMemoryGetData;
   HOST_MEMORY_APPEND: NativeMemoryAppendData;
   HOST_MEMORY_CLEAR: NativeMemoryClearData;
+  HOST_PUBLISH_EVIDENCE: NativePublishEvidenceData;
+  HOST_CLEAR_EVIDENCE: NativeClearEvidenceData;
 }
 
 export class NativeHostClientError extends Error {
@@ -151,6 +155,16 @@ export class NativeHostClient {
     return this.runBounded(request, NATIVE_TIMEOUT_MS.memory);
   }
 
+  publishEvidence(origin: string, title: string, evidence: string): Promise<NativePublishEvidenceData> {
+    const request = this.makeRequest("HOST_PUBLISH_EVIDENCE", { origin, title, evidence });
+    return this.runBounded(request, NATIVE_TIMEOUT_MS.evidence);
+  }
+
+  clearEvidence(): Promise<NativeClearEvidenceData> {
+    const request = this.makeRequest("HOST_CLEAR_EVIDENCE");
+    return this.runBounded(request, NATIVE_TIMEOUT_MS.evidence);
+  }
+
   disconnect(): void {
     this.generation += 1;
     this.connectionPromise = null;
@@ -192,12 +206,18 @@ export class NativeHostClient {
     payload?: { origin: string },
   ): Extract<NativeHostRequest, { type: "HOST_MEMORY_CLEAR" }>;
   private makeRequest(
+    type: "HOST_PUBLISH_EVIDENCE",
+    payload: { origin: string; title: string; evidence: string },
+  ): Extract<NativeHostRequest, { type: "HOST_PUBLISH_EVIDENCE" }>;
+  private makeRequest(type: "HOST_CLEAR_EVIDENCE"): Extract<NativeHostRequest, { type: "HOST_CLEAR_EVIDENCE" }>;
+  private makeRequest(
     type: NativeRequestType,
     payload?: { key: string }
       | { sdp: string; mode: RealtimeSessionMode }
       | { provider: CredentialProvider }
       | { origin: string }
-      | { origin: string; question: string; answer: string },
+      | { origin: string; question: string; answer: string }
+      | { origin: string; title: string; evidence: string },
   ): NativeHostRequest {
     const requestId = this.createRequestId();
     let request: NativeHostRequest;
@@ -242,6 +262,17 @@ export class NativeHostClient {
         request = payload === undefined
           ? { version: NATIVE_PROTOCOL_VERSION, requestId, type }
           : { version: NATIVE_PROTOCOL_VERSION, requestId, type, payload: payload as { origin: string } };
+        break;
+      case "HOST_PUBLISH_EVIDENCE":
+        request = {
+          version: NATIVE_PROTOCOL_VERSION,
+          requestId,
+          type,
+          payload: payload as { origin: string; title: string; evidence: string },
+        };
+        break;
+      case "HOST_CLEAR_EVIDENCE":
+        request = { version: NATIVE_PROTOCOL_VERSION, requestId, type };
         break;
     }
     if (!isNativeHostRequest(request)) {
