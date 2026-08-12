@@ -3,104 +3,105 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
-    <title>Set up Browser Guide</title>
+    <meta name="color-scheme" content="light" />
+    <title>Connect Browser Guide</title>
     <link rel="stylesheet" href="welcome.css" />
   </head>
   <body>
-    <main class="wizard-shell">
-      <section class="wizard-card">
-        <span class="wizard-beacon" aria-hidden="true">
-          <svg viewBox="0 0 324 250" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M67.5441 55.8643C47.4515 61.2723 32.6209 46.2677 17 61.8887C1.379 77.5097 10.5521 93.6713 10.9755 112.433L130.415 234.573C142.709 246.867 161.65 237.78 177.271 222.159C192.892 206.539 195.589 183.909 183.295 171.615L67.5441 55.8643Z" fill="#FF5524"/>
-            <path d="M201.527 39.882C201.527 20.801 189.396 1.1473 161.18 0C141.632 0 123.896 13.6579 121.527 39.3971L120.818 199.161C120.752 214.037 124.964 229.255 136.849 238.2C143.761 243.402 152.354 247.851 161.527 247.851C177.231 247.851 185.084 240.612 192.391 229.162C198.846 219.046 201.527 206.998 201.527 194.998V39.882Z" fill="#8337FF"/>
-            <path d="M310.364 116.84C323.541 103.664 325.88 79.6389 308.354 62.1132C292.78 46.5387 268.037 46.0305 254.861 59.2068L132.235 181.832C119.059 195.008 121.003 218.316 136.578 233.89C152.152 249.465 175.459 251.409 188.636 238.232L310.364 116.84Z" fill="#2EB6FF"/>
-            <path d="M161.527 249.248C183.918 249.248 202.069 231.097 202.069 208.706C202.069 186.315 183.918 168.163 161.527 168.163C139.136 168.163 120.984 186.315 120.984 208.706C120.984 231.097 139.136 249.248 161.527 249.248Z" fill="#ABFF50"/>
-            <path d="M161.527 80C183.619 80 201.527 62.0914 201.527 40C201.527 17.9086 183.619 0 161.527 0C139.436 0 121.527 17.9086 121.527 40C121.527 62.0914 139.436 80 161.527 80Z" fill="#9C60FF"/>
-            <path d="M283.283 127.292C305.375 127.292 323.283 109.383 323.283 87.292C323.283 65.2006 305.375 47.292 283.283 47.292C261.192 47.292 243.283 65.2006 243.283 87.292C243.283 109.383 261.192 127.292 283.283 127.292Z" fill="#58C5FF"/>
-            <path d="M40 124.893C62.0914 124.893 80 106.984 80 84.8926C80 62.8012 62.0914 44.8926 40 44.8926C17.9086 44.8926 0 62.8012 0 84.8926C0 106.984 17.9086 124.893 40 124.893Z" fill="#FF7750"/>
-          </svg>
-        </span>
-        <p class="wizard-kicker">Welcome</p>
-        <h1>Set up Browser Guide</h1>
-        <p class="wizard-subtitle">One permission and you are guiding. Everything stays local to this Mac.</p>
+    <div class="container">
+      <!-- Connect view -->
+      <div class="card" id="connect-card">
+        <svg class="logo" viewBox="0 0 324 250" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M67.5441 55.8643C47.4515 61.2723 32.6209 46.2677 17 61.8887C1.379 77.5097 10.5521 93.6713 10.9755 112.433L130.415 234.573C142.709 246.867 161.65 237.78 177.271 222.159C192.892 206.539 195.589 183.909 183.295 171.615L67.5441 55.8643Z" fill="#FF5524"/>
+          <path d="M201.527 39.882C201.527 20.801 189.396 1.1473 161.18 0C141.632 0 123.896 13.6579 121.527 39.3971L120.818 199.161C120.752 214.037 124.964 229.255 136.849 238.2C143.761 243.402 152.354 247.851 161.527 247.851C177.231 247.851 185.084 240.612 192.391 229.162C198.846 219.046 201.527 206.998 201.527 194.998V39.882Z" fill="#8337FF"/>
+          <path d="M310.364 116.84C323.541 103.664 325.88 79.6389 308.354 62.1132C292.78 46.5387 268.037 46.0305 254.861 59.2068L132.235 181.832C119.059 195.008 121.003 218.316 136.578 233.89C152.152 249.465 175.459 251.409 188.636 238.232L310.364 116.84Z" fill="#2EB6FF"/>
+          <path d="M161.527 249.248C183.918 249.248 202.069 231.097 202.069 208.706C202.069 186.315 183.918 168.163 161.527 168.163C139.136 168.163 120.984 186.315 120.984 208.706C120.984 231.097 139.136 249.248 161.527 249.248Z" fill="#ABFF50"/>
+          <path d="M161.527 80C183.619 80 201.527 62.0914 201.527 40C201.527 17.9086 183.619 0 161.527 0C139.436 0 121.527 17.9086 121.527 40C121.527 62.0914 139.436 80 161.527 80Z" fill="#9C60FF"/>
+          <path d="M283.283 127.292C305.375 127.292 323.283 109.383 323.283 87.292C323.283 65.2006 305.375 47.292 283.283 47.292C261.192 47.292 243.283 65.2006 243.283 87.292C243.283 109.383 261.192 127.292 283.283 127.292Z" fill="#58C5FF"/>
+          <path d="M40 124.893C62.0914 124.893 80 106.984 80 84.8926C80 62.8012 62.0914 44.8926 40 44.8926C17.9086 44.8926 0 62.8012 0 84.8926C0 106.984 17.9086 124.893 40 124.893Z" fill="#FF7750"/>
+        </svg>
 
-        <ol class="stepper">
-          <li class="step done" id="step-install">
-            <span class="step-dot" aria-hidden="true"></span>
-            <div class="step-body">
-              <h2>Install the extension</h2>
-              <p class="step-line">Done — you are reading this from it.</p>
+        <svg class="mascot" id="allset-mascot" viewBox="0 0 24 24" aria-hidden="true" hidden>
+          <circle cx="12" cy="13" r="8.6" fill="#ffffff" stroke="#5B9EFF" stroke-width="1.6"/>
+          <path d="M12 1.6 L13.8 5.4 L10.2 5.4 Z" fill="#5B9EFF"/>
+          <circle class="mascot-eye" cx="9.3" cy="11.6" r="1.15" fill="#1d1f1c"/>
+          <circle class="mascot-eye" cx="14.7" cy="11.6" r="1.15" fill="#1d1f1c"/>
+          <path d="M9 14.6 Q12 17.6 15 14.6" fill="none" stroke="#1d1f1c" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+
+        <h1 id="connect-title">Connect Browser Guide</h1>
+        <p class="subtitle" id="connect-subtitle">A read-only guide for the page in front of you — it explains and points, never acts</p>
+
+        <div class="stepper">
+          <div class="step done" id="step-install">
+            <div class="step-dot">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
             </div>
-          </li>
-
-          <li class="step" id="step-helper" data-state="checking">
-            <span class="step-dot" aria-hidden="true"></span>
-            <div class="step-body">
-              <h2>Allow the local helper</h2>
-              <p class="step-line" data-when="checking">Checking this Mac…</p>
-              <p class="step-line" data-when="permission" hidden>Chrome asks once for permission to talk to the Browser Guide helper on this Mac. Nothing leaves your computer.</p>
-              <p class="step-line" data-when="missing" hidden>Chrome could not reach the helper. Choose <strong>Allow the helper</strong> first; if it still fails, reload the extension at <code>chrome://extensions</code> or restart Chrome, then check again.</p>
-              <p class="step-line" data-when="done" hidden>The helper is connected.</p>
-              <div class="step-actions">
-                <button id="helper-allow" class="wizard-action" type="button" hidden>Allow the helper</button>
-                <button id="helper-recheck" class="wizard-action ghost" type="button" hidden>Check again</button>
-              </div>
-              <p class="step-error" id="helper-error" role="status" hidden></p>
-            </div>
-          </li>
-
-          <li class="step" id="step-mic" data-state="checking">
-            <span class="step-dot" aria-hidden="true"></span>
-            <div class="step-body">
-              <h2>Allow the microphone <span class="step-tag">optional — skip if you only type</span></h2>
-              <p class="step-line" data-when="checking">Checking the current permission…</p>
-              <p class="step-line" data-when="intro" hidden>Only needed for spoken questions, and only active while you are talking to the guide. Typed questions never use it.</p>
-              <p class="step-line" data-when="denied" hidden>Chrome currently blocks the microphone for Browser Guide. Open a new tab, paste the address below, set <strong>Microphone</strong> to <strong>Allow</strong>, then try again.</p>
-              <p class="step-line" data-when="missing" hidden>No microphone was found. Connect or enable one, then try again.</p>
-              <p class="step-line" data-when="done" hidden>Permission granted. The microphone turns on only while you are speaking to the guide — never in the background.</p>
-              <div class="mic-address" id="mic-address-row" hidden>
-                <code id="settings-address"></code>
-                <button id="copy-address" type="button">Copy</button>
-              </div>
-              <div class="step-actions">
-                <button id="mic-enable" class="wizard-action" type="button" hidden>Enable microphone</button>
-                <button id="mic-retry" class="wizard-action ghost" type="button" hidden>Try again</button>
-              </div>
-              <p class="step-hint" id="mic-hint" hidden>If Chrome never asks at all, also allow Google Chrome to use the microphone in System Settings &rsaquo; Privacy &amp; Security &rsaquo; Microphone.</p>
-            </div>
-          </li>
-
-          <li class="step" id="step-key" data-state="waiting">
-            <span class="step-dot" aria-hidden="true"></span>
-            <div class="step-body">
-              <h2>Add your OpenAI key <span class="step-tag">optional here — the panel asks when needed</span></h2>
-              <p class="step-line" data-when="waiting">You can add it now or skip; the side panel requests it before the first question.</p>
-              <p class="step-line" data-when="missing" hidden>Paste a newly issued OpenAI Platform key, or skip — the side panel will ask before your first question. Keys go straight to macOS Keychain, never into Chrome.</p>
-              <p class="step-line" data-when="done" hidden>Stored in macOS Keychain.</p>
-              <form id="key-form" class="key-form" hidden>
-                <label for="wizard-key">OpenAI API key</label>
-                <input id="wizard-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-proj-…" />
-                <button id="key-save" class="wizard-action" type="submit" disabled>Save to Keychain</button>
-              </form>
-              <p class="step-error" id="key-error" role="status" hidden></p>
-            </div>
-          </li>
-        </ol>
-
-        <div class="wizard-finish" id="finish" data-ready="false">
-          <div class="finish-copy">
-            <h2>Start guiding</h2>
-            <p>Open any page, click the Browser Guide toolbar icon, and ask. The guide explains and points — it never clicks or types for you.</p>
-            <p class="redirect-note" id="redirect-note" hidden>Permission granted — taking you to the guide…</p>
+            <span>Install extension</span>
           </div>
-          <a class="wizard-action finish-link" id="docs-link" href="https://browser-guide-docs.vercel.app" target="_blank" rel="noreferrer">Read the guide</a>
+          <div class="step current" id="step-grant">
+            <div class="step-dot"></div>
+            <span>Grant helper access</span>
+          </div>
+          <div class="step" id="step-tour">
+            <div class="step-dot"></div>
+            <span>Take your first tour</span>
+          </div>
         </div>
 
-        <p class="wizard-privacy"><span aria-hidden="true"></span>Keys live in macOS Keychain. Page evidence goes only to OpenAI, only when you ask.</p>
-        <p class="wizard-brand">Crawlio Browser Guide · open source, <a href="https://www.crawlio.app" target="_blank" rel="noreferrer">by Crawlio</a></p>
-      </section>
-    </main>
+        <div class="divider"></div>
+        <p id="connect-status" class="status-line" role="alert" hidden></p>
+        <button id="connect-btn" class="btn btn-primary">Review &amp; Grant Access</button>
+        <button id="recheck-btn" class="btn btn-ghost" hidden>Check helper again</button>
+        <p class="brand-line">Browser Guide · open source, <a href="https://www.crawlio.app" target="_blank" rel="noreferrer">by Crawlio</a></p>
+      </div>
+
+      <!-- Microphone view (opened from the panel's voice beacon) -->
+      <div class="card" id="mic-card" hidden>
+        <svg class="mascot" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="13" r="8.6" fill="#ffffff" stroke="#5B9EFF" stroke-width="1.6"/>
+          <path d="M12 1.6 L13.8 5.4 L10.2 5.4 Z" fill="#5B9EFF"/>
+          <circle class="mascot-eye" cx="9.3" cy="11.6" r="1.15" fill="#1d1f1c"/>
+          <circle class="mascot-eye" cx="14.7" cy="11.6" r="1.15" fill="#1d1f1c"/>
+          <path d="M9.5 15 Q12 17 14.5 15" fill="none" stroke="#1d1f1c" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+        <h1 id="mic-title">Allow the microphone</h1>
+        <p class="subtitle" id="mic-subtitle">Only used while you speak to the guide — never in the background</p>
+        <div class="mic-body">
+          <p class="mic-line" data-when="intro">Chrome asks once, near the address bar. Typed questions work without it.</p>
+          <p class="mic-line" data-when="denied" hidden>Chrome currently blocks the microphone for Browser Guide. Open a new tab, paste the address below, set <b>Microphone</b> to <b>Allow</b>, then try again.</p>
+          <p class="mic-line" data-when="missing" hidden>No microphone was found. Connect or enable one, then try again.</p>
+          <p class="mic-line" data-when="done" hidden>Permission granted. Return to the side panel and press the voice beacon.</p>
+          <div class="mic-address" id="mic-address-row" hidden>
+            <code id="settings-address"></code>
+            <button id="copy-address" type="button">Copy</button>
+          </div>
+        </div>
+        <button id="mic-enable" class="btn btn-primary">Enable microphone</button>
+        <button id="mic-retry" class="btn btn-ghost" hidden>Try again</button>
+        <p class="mic-hint" id="mic-hint" hidden>If Chrome never asks at all, also allow Google Chrome the microphone in System Settings › Privacy &amp; Security.</p>
+      </div>
+    </div>
+
+    <!-- Trust modal -->
+    <div id="modal-overlay" class="modal-overlay">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <h2 id="modal-title">Authorize helper access</h2>
+        <p>Chrome will ask once for every optional capability declared by this Browser Guide build:</p>
+        <ul id="permission-list" class="modal-list"></ul>
+        <div class="modal-detail">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span>Read-only by design. Your key stays in macOS Keychain; page evidence goes only to OpenAI when you ask.</span>
+        </div>
+        <p id="permission-status" class="permission-status" role="alert"></p>
+        <button id="authorize-btn" class="btn btn-primary">Authorize</button>
+        <button id="cancel-btn" class="btn btn-ghost">Cancel</button>
+      </div>
+    </div>
+
     <script src="welcome.js"></script>
   </body>
 </html>

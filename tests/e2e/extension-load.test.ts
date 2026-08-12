@@ -87,9 +87,22 @@ describe.skipIf(!existsSync(chromiumPath))("load-unpacked extension package", ()
     const wizardErrors: string[] = [];
     wizardPage.on("pageerror", (error) => wizardErrors.push(error.message));
     await wizardPage.goto(extensionOrigin + "/welcome.html");
-    await expect.poll(() => wizardPage.locator(".wizard-card h1").innerText()).toBe("Set up Browser Guide");
+    await expect.poll(() => wizardPage.locator("#connect-title").innerText()).toBe("Connect Browser Guide");
     await expect.poll(() => wizardPage.locator("#step-install.done").count()).toBe(1);
-    await expect.poll(() => wizardPage.locator("#step-helper[data-state='permission'] #helper-allow:visible").count()).toBe(1);
+    await expect.poll(() => wizardPage.locator("#step-grant.current").count()).toBe(1);
+    await expect.poll(() => wizardPage.locator("#connect-btn:visible").innerText()).toContain("Review & Grant Access");
+
+    // The trust modal derives its consent list from the live manifest.
+    await wizardPage.locator("#connect-btn").evaluate((element) => {
+      (element as HTMLButtonElement).click();
+    });
+    await expect.poll(() => wizardPage.locator(".modal-overlay.visible").count()).toBe(1);
+    await expect.poll(() => wizardPage.locator("#permission-list li").allInnerTexts()).toContain("Confirm the local Keychain helper is genuine");
+    await wizardPage.locator("#cancel-btn").evaluate((element) => {
+      (element as HTMLButtonElement).click();
+    });
+    await expect.poll(() => wizardPage.locator(".modal-overlay.visible").count()).toBe(0);
+
     for (const viewport of [{ width: 360, height: 640 }, { width: 1280, height: 800 }]) {
       await wizardPage.setViewportSize(viewport);
       const layout = await wizardPage.evaluate(() => ({

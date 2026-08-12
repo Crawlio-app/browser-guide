@@ -1,16 +1,12 @@
 # Dependencies
 node_modules/
-site/node_modules/
 
 # Build outputs
 dist/
 native/macos/.build/
-site/.next/
-site/next-env.d.ts
 *.tsbuildinfo
 
 # Deployment state
-site/.vercel/
 .vercel/
 
 # Logs and OS noise

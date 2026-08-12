@@ -6,7 +6,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/Crawlio-app/browser-guide/actions/workflows/ci.yml/badge.svg)](https://github.com/Crawlio-app/browser-guide/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-browser--guide--docs.vercel.app-27866a)](https://browser-guide-docs.vercel.app)
+[![Docs](https://img.shields.io/badge/docs-docs.crawlio.app%2Fbrowser--guide-5B9EFF)](https://docs.crawlio.app/browser-guide/overview)
 
 A read-only Chrome side-panel guide that explains the page in front of you and visually points to the right control — over a private OpenAI Realtime connection brokered by a local macOS helper. It **never clicks, types, submits, navigates, or acts** on your behalf; the only thing it moves is the view, and only when you press its take-me-there arrow.
 
@@ -20,7 +20,7 @@ Built by the makers of [Crawlio](https://www.crawlio.app). Where [Crawlio Browse
 - **Voice** — press the beacon (or `⌘⇧G` / `⌘⇧Space`) and talk; audio streams from your Mac directly to OpenAI over WebRTC. A **Speak** toggle reads typed answers aloud without using the microphone.
 - **Visual sharing, fail-closed** — screenshots are opt-in and omitted entirely whenever a visible input, code block, or likely-sensitive content is present.
 - **Keys in macOS Keychain** — your OpenAI API key is written by a native helper through Security.framework. It never enters Chrome storage, source, logs, or command arguments.
-- **Guided onboarding** — a permissions-first setup wizard opens on install and hands you to the [hosted guide](https://browser-guide-docs.vercel.app) the moment the one required permission is granted.
+- **Guided onboarding** — a permissions-first setup wizard opens on install and hands you to the [hosted guide](https://docs.crawlio.app/browser-guide/overview) the moment the one required permission is granted.
 
 ## The read-only guarantee
 

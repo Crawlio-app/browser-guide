@@ -1,281 +1,305 @@
-import { isHostConfigureResponse, isHostHealthResponse } from "../../shared/native-protocol.js";
+import { isHostHealthResponse } from "../../shared/native-protocol.js";
 import { isRecord } from "../../shared/protocol.js";
 
-type HelperState = "checking" | "permission" | "missing" | "done";
-type KeyState = "waiting" | "missing" | "done";
-type MicState = "checking" | "intro" | "denied" | "missing" | "done";
+const GUIDE_URL = "https://docs.crawlio.app/browser-guide/overview";
+const ALL_SET_DELAY_MS = 1_400;
 
-const GUIDE_URL = "https://browser-guide-docs.vercel.app";
-const REDIRECT_DELAY_MS = 1_400;
+/** Human labels for every optional capability this build can declare. The
+ *  modal list derives from the live manifest so a new permission can never
+ *  ship without a matching line of consent copy. */
+const PERMISSION_LABELS: Record<string, string> = {
+  nativeMessaging: "Confirm the local Keychain helper is genuine",
+};
 
-let helperState: HelperState = "checking";
-let keyState: KeyState = "waiting";
-let micState: MicState = "checking";
-let micAnnounced = false;
-let micStatus: PermissionStatus | null = null;
-let helperWasIncomplete = false;
-let redirectTimer: number | null = null;
+function requiredElement<T extends HTMLElement>(id: string): T {
+  const element = document.getElementById(id);
+  if (!element) throw new Error("Missing wizard element: #" + id);
+  return element as T;
+}
 
-const helperStep = query("#step-helper");
-const keyStep = query("#step-key");
-const micStep = query("#step-mic");
-const finish = query("#finish");
-const helperAllow = query<HTMLButtonElement>("#helper-allow");
-const helperRecheck = query<HTMLButtonElement>("#helper-recheck");
-const helperError = query("#helper-error");
-const keyForm = query<HTMLFormElement>("#key-form");
-const keyInput = query<HTMLInputElement>("#wizard-key");
-const keySave = query<HTMLButtonElement>("#key-save");
-const keyError = query("#key-error");
-const micEnable = query<HTMLButtonElement>("#mic-enable");
-const micRetry = query<HTMLButtonElement>("#mic-retry");
-const micHint = query("#mic-hint");
-const micAddressRow = query("#mic-address-row");
-const settingsAddress = query("#settings-address");
-const copyAddress = query<HTMLButtonElement>("#copy-address");
-const redirectNote = query("#redirect-note");
+const connectCard = requiredElement<HTMLDivElement>("connect-card");
+const micCard = requiredElement<HTMLDivElement>("mic-card");
+const connectTitle = requiredElement<HTMLHeadingElement>("connect-title");
+const connectSubtitle = requiredElement<HTMLParagraphElement>("connect-subtitle");
+const connectStatus = requiredElement<HTMLParagraphElement>("connect-status");
+const connectButton = requiredElement<HTMLButtonElement>("connect-btn");
+const recheckButton = requiredElement<HTMLButtonElement>("recheck-btn");
+const stepGrant = requiredElement<HTMLDivElement>("step-grant");
+const stepTour = requiredElement<HTMLDivElement>("step-tour");
+const allSetMascot = requiredElement<HTMLElement>("allset-mascot");
+const modalOverlay = requiredElement<HTMLDivElement>("modal-overlay");
+const permissionList = requiredElement<HTMLUListElement>("permission-list");
+const permissionStatus = requiredElement<HTMLParagraphElement>("permission-status");
+const authorizeButton = requiredElement<HTMLButtonElement>("authorize-btn");
+const cancelButton = requiredElement<HTMLButtonElement>("cancel-btn");
 
-settingsAddress.textContent = "chrome://settings/content/siteDetails?site=" + encodeURIComponent(location.origin);
+let outstanding: string[] = [];
+let modalOpener: HTMLElement | null = null;
 
-helperAllow.addEventListener("click", () => {
-  void requestHelperPermission();
+void (async () => {
+  if (location.hash === "#microphone") {
+    connectCard.hidden = true;
+    micCard.hidden = false;
+    initMicrophoneView();
+    return;
+  }
+
+  // All async preparation happens now: the Authorize click handler must reach
+  // chrome.permissions.request() as its first await or Chrome drops the user
+  // gesture and silently refuses the prompt.
+  const declared = declaredOptionalPermissions();
+  outstanding = await missingPermissions(declared);
+  for (const permission of declared) {
+    const item = document.createElement("li");
+    item.textContent = PERMISSION_LABELS[permission] ?? permission;
+    permissionList.append(item);
+  }
+
+  if (outstanding.length === 0) {
+    const health = await helperHealth();
+    if (health.ok) {
+      // Re-entry: everything already works, hand straight off to the guide.
+      window.location.href = GUIDE_URL;
+      return;
+    }
+    enterRecheckMode(health.error);
+  }
+})();
+
+connectButton.addEventListener("click", () => {
+  permissionStatus.textContent = "";
+  modalOpener = connectButton;
+  modalOverlay.classList.add("visible");
+  authorizeButton.focus();
 });
-helperRecheck.addEventListener("click", () => {
-  void refreshHelper();
+
+function closeModal(): void {
+  modalOverlay.classList.remove("visible");
+  modalOpener?.focus();
+  modalOpener = null;
+}
+
+cancelButton.addEventListener("click", closeModal);
+modalOverlay.addEventListener("click", (event) => {
+  if (event.target === modalOverlay) closeModal();
 });
-keyInput.addEventListener("input", () => {
-  keySave.disabled = keyInput.value.trim().length === 0;
-});
-keyForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  void saveKey();
-});
-micEnable.addEventListener("click", () => {
-  void requestMicrophone();
-});
-micRetry.addEventListener("click", () => {
-  void requestMicrophone();
-});
-copyAddress.addEventListener("click", () => {
-  const address = settingsAddress.textContent ?? "";
-  void navigator.clipboard.writeText(address).then(() => {
-    copyAddress.textContent = "Copied";
-    window.setTimeout(() => {
-      copyAddress.textContent = "Copy";
-    }, 1_600);
-  }).catch(() => undefined);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && modalOverlay.classList.contains("visible")) closeModal();
 });
 
-if (location.hash === "#microphone") micStep.classList.add("spotlight");
+authorizeButton.addEventListener("click", () => {
+  authorizeButton.disabled = true;
+  // permissions.request must be the first await to keep the user gesture.
+  const request: Promise<boolean> = outstanding.length === 0
+    ? Promise.resolve(true)
+    : new Promise((resolve) => {
+        chrome.permissions.request({ permissions: outstanding as chrome.runtime.ManifestPermissions[] }, (granted) => {
+          const error = chrome.runtime.lastError;
+          resolve(error ? false : granted);
+        });
+      });
+  void request.then(async (granted) => {
+    const remaining = await missingPermissions(declaredOptionalPermissions());
+    if (!granted || remaining.length > 0) {
+      permissionStatus.textContent = "Access was not granted. Review Chrome's prompt and try again.";
+      return;
+    }
+    outstanding = [];
+    const health = await helperHealth();
+    closeModal();
+    if (health.ok) {
+      finishOnboarding();
+    } else {
+      enterRecheckMode(health.error);
+    }
+  }).catch((error: unknown) => {
+    permissionStatus.textContent = "Chrome could not complete the request: "
+      + (error instanceof Error ? error.message : "unknown error");
+  }).finally(() => {
+    authorizeButton.disabled = false;
+  });
+});
 
-void refreshHelper();
-void refreshMicrophone();
+recheckButton.addEventListener("click", () => {
+  recheckButton.disabled = true;
+  setStatus(null);
+  void helperHealth().then((health) => {
+    if (health.ok) finishOnboarding();
+    else setStatus(health.error);
+  }).finally(() => {
+    recheckButton.disabled = false;
+  });
+});
 
-async function refreshHelper(): Promise<void> {
-  setHelper("checking");
-  setError(helperError, null);
+function enterRecheckMode(message: string): void {
+  connectButton.hidden = true;
+  recheckButton.hidden = false;
+  setStatus(message);
+}
+
+function setStatus(message: string | null): void {
+  connectStatus.hidden = message === null;
+  connectStatus.textContent = message ?? "";
+}
+
+function finishOnboarding(): void {
+  markStepDone(stepGrant);
+  stepTour.classList.add("current");
+  connectTitle.textContent = "You're all set!";
+  connectSubtitle.textContent = "Taking you to your first tour…";
+  allSetMascot.hidden = false;
+  connectButton.hidden = true;
+  recheckButton.hidden = true;
+  setStatus(null);
+  // A short pause lets the green check land before the handoff.
+  window.setTimeout(() => {
+    window.location.href = GUIDE_URL + "?from=extension";
+  }, ALL_SET_DELAY_MS);
+}
+
+function markStepDone(step: HTMLElement): void {
+  step.classList.remove("current");
+  step.classList.add("done");
+  const dot = step.querySelector(".step-dot");
+  if (!dot) return;
+  dot.textContent = "";
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", "12");
+  svg.setAttribute("height", "12");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "3");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M20 6 9 17l-5-5");
+  svg.append(path);
+  dot.append(svg);
+}
+
+function declaredOptionalPermissions(): string[] {
+  const manifest = chrome.runtime.getManifest();
+  return [...(manifest.optional_permissions ?? [])];
+}
+
+async function missingPermissions(declared: string[]): Promise<string[]> {
+  // permissions.contains is all-or-nothing, so probe each one individually.
+  const gaps: string[] = [];
+  for (const permission of declared) {
+    const held = await new Promise<boolean>((resolve) => {
+      chrome.permissions.contains({ permissions: [permission] as chrome.runtime.ManifestPermissions[] }, (result) => {
+        const error = chrome.runtime.lastError;
+        resolve(error ? false : result);
+      });
+    });
+    if (!held) gaps.push(permission);
+  }
+  return gaps;
+}
+
+async function helperHealth(): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const response = await withDeadline(runtimeSend<unknown>({ type: "GUIDE_HOST_HEALTH" }), 10_000);
-    if (isHostHealthResponse(response) && response.ok) {
-      setKey(response.health.configured === true ? "done" : "missing");
-      setHelper("done");
-      return;
-    }
+    if (isHostHealthResponse(response) && response.ok) return { ok: true };
     const code = isRecord(response) && typeof response.code === "string" ? response.code : "";
-    if (code === "PERMISSION_REQUIRED") {
-      setHelper("permission");
-      setKey("waiting");
-      return;
-    }
+    // Key-related states still prove the helper is reachable; the side panel
+    // asks for the key when it is needed.
     if (code === "NOT_CONFIGURED" || code === "INVALID_API_KEY" || code === "SECURE_STORAGE_ERROR") {
-      setKey("missing");
-      setHelper("done");
-      return;
+      return { ok: true };
     }
-    setHelper("missing");
-    setKey("waiting");
-    setError(helperError, describeFailure(code, response));
+    const message = isRecord(response) && typeof response.error === "string"
+      ? response.error.slice(0, 300)
+      : "The helper did not answer.";
+    return {
+      ok: false,
+      error: (code ? code + " — " : "") + message
+        + " Open Browser Guide Helper once (or run npm run install:helper), then check again.",
+    };
   } catch (error) {
-    setHelper("missing");
-    setKey("waiting");
-    setError(helperError, error instanceof Error && error.message
-      ? "Chrome reported: " + error.message.slice(0, 300)
-      : "The helper check did not finish.");
+    return {
+      ok: false,
+      error: "Chrome reported: " + (error instanceof Error ? error.message.slice(0, 240) : "no response")
+        + ". Reload the extension or restart Chrome, then check again.",
+    };
   }
 }
 
-async function requestHelperPermission(): Promise<void> {
-  setError(helperError, null);
-  const granted = await new Promise<boolean>((resolve) => {
-    chrome.permissions.request({ permissions: ["nativeMessaging"] }, (result) => {
-      const error = chrome.runtime.lastError;
-      resolve(error ? false : result);
-    });
-  });
-  if (!granted) {
-    setError(helperError, "Chrome needs this one-time permission before Browser Guide can reach the helper.");
-    return;
-  }
-  await refreshHelper();
-}
+/* ── Microphone view (deep link from the panel's voice beacon) ── */
 
-async function saveKey(): Promise<void> {
-  const key = keyInput.value.trim();
-  setError(keyError, null);
-  if (key.length < 20 || key.length > 600) {
-    setError(keyError, "Paste a valid OpenAI Platform API key.");
-    return;
-  }
-  keyInput.value = "";
-  keySave.disabled = true;
-  keySave.textContent = "Saving…";
-  try {
-    const response = await withDeadline(
-      runtimeSend<unknown>({ type: "GUIDE_HOST_CONFIGURE_KEY", key }),
-      10_000,
-    );
-    if (!isHostConfigureResponse(response) || !response.ok) {
-      throw new Error(isRecord(response) && typeof response.error === "string"
-        ? response.error.slice(0, 300)
-        : "The key could not be saved to Keychain.");
+function initMicrophoneView(): void {
+  const enable = requiredElement<HTMLButtonElement>("mic-enable");
+  const retry = requiredElement<HTMLButtonElement>("mic-retry");
+  const hint = requiredElement<HTMLParagraphElement>("mic-hint");
+  const addressRow = requiredElement<HTMLDivElement>("mic-address-row");
+  const address = requiredElement<HTMLElement>("settings-address");
+  const copy = requiredElement<HTMLButtonElement>("copy-address");
+  const title = requiredElement<HTMLHeadingElement>("mic-title");
+  const subtitle = requiredElement<HTMLParagraphElement>("mic-subtitle");
+  let announced = false;
+  let status: PermissionStatus | null = null;
+
+  address.textContent = "chrome://settings/content/siteDetails?site=" + encodeURIComponent(location.origin);
+
+  const show = (state: "intro" | "denied" | "missing" | "done"): void => {
+    for (const line of micCard.querySelectorAll<HTMLElement>("[data-when]")) {
+      line.hidden = line.dataset.when !== state;
     }
-    setKey("done");
-  } catch (error) {
-    setError(keyError, error instanceof Error && error.message ? error.message : "The key could not be saved to Keychain.");
-  } finally {
-    keySave.textContent = "Save to Keychain";
-  }
-}
-
-async function refreshMicrophone(): Promise<void> {
-  try {
-    if (!micStatus) {
-      micStatus = await navigator.permissions.query({ name: "microphone" as PermissionName });
-      micStatus.addEventListener("change", () => {
-        void applyMicrophoneStatus();
-      });
+    enable.hidden = state !== "intro";
+    retry.hidden = state !== "denied" && state !== "missing";
+    addressRow.hidden = state !== "denied";
+    hint.hidden = state !== "denied";
+    if (state === "done") {
+      title.textContent = "Microphone ready";
+      subtitle.textContent = "The mic turns on only while you are speaking to the guide";
+      if (!announced) {
+        announced = true;
+        try {
+          chrome.runtime.sendMessage({ type: "GUIDE_MIC_READY" }, () => {
+            void chrome.runtime.lastError;
+          });
+        } catch {
+          // The panel may simply not be open.
+        }
+      }
     }
-    await applyMicrophoneStatus();
-  } catch {
-    setMic("intro");
-  }
-}
+  };
 
-async function applyMicrophoneStatus(): Promise<void> {
-  const state = micStatus?.state;
-  if (state === "granted") markMicReady();
-  else if (state === "denied") setMic("denied");
-  else setMic("intro");
-}
+  const apply = (): void => {
+    const state = status?.state;
+    if (state === "granted") show("done");
+    else if (state === "denied") show("denied");
+    else show("intro");
+  };
 
-async function requestMicrophone(): Promise<void> {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    for (const track of stream.getTracks()) track.stop();
-    markMicReady();
-  } catch (error) {
-    const name = error instanceof DOMException ? error.name : "";
-    if (name === "NotFoundError" || name === "OverconstrainedError") setMic("missing");
-    else setMic("denied");
-  }
-}
-
-function markMicReady(): void {
-  if (!micAnnounced) {
-    micAnnounced = true;
+  const request = async (): Promise<void> => {
     try {
-      chrome.runtime.sendMessage({ type: "GUIDE_MIC_READY" }, () => {
-        void chrome.runtime.lastError;
-      });
-    } catch {
-      // The panel may simply not be open; readiness still shows here.
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      for (const track of stream.getTracks()) track.stop();
+      show("done");
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : "";
+      if (name === "NotFoundError" || name === "OverconstrainedError") show("missing");
+      else show("denied");
     }
-  }
-  setMic("done");
-}
+  };
 
-function setHelper(state: HelperState): void {
-  // "checking" always precedes "done", so only a state the user had to act on
-  // counts as an incomplete visit — otherwise reopening the wizard from
-  // Options would bounce straight to the guide.
-  if (state === "permission" || state === "missing") helperWasIncomplete = true;
-  helperState = state;
-  helperStep.dataset.state = state;
-  showLines(helperStep, state);
-  helperAllow.hidden = state !== "permission" && state !== "missing";
-  helperRecheck.hidden = state !== "missing";
-  render();
-  maybeAdvanceToGuide();
-}
+  enable.addEventListener("click", () => void request());
+  retry.addEventListener("click", () => void request());
+  copy.addEventListener("click", () => {
+    void navigator.clipboard.writeText(address.textContent ?? "").then(() => {
+      copy.textContent = "Copied";
+      window.setTimeout(() => {
+        copy.textContent = "Copy";
+      }, 1_600);
+    }).catch(() => undefined);
+  });
 
-function setKey(state: KeyState): void {
-  keyState = state;
-  keyStep.dataset.state = state;
-  showLines(keyStep, state);
-  keyForm.hidden = state !== "missing";
-  if (state === "missing") keySave.disabled = keyInput.value.trim().length === 0;
-  render();
-}
-
-function setMic(state: MicState): void {
-  micState = state;
-  micStep.dataset.state = state;
-  showLines(micStep, state);
-  micEnable.hidden = state !== "intro";
-  micRetry.hidden = state !== "denied" && state !== "missing";
-  micAddressRow.hidden = state !== "denied";
-  micHint.hidden = state !== "denied";
-  render();
-}
-
-function render(): void {
-  const helperDone = helperState === "done";
-  mark(helperStep, helperDone, !helperDone);
-  mark(micStep, micState === "done", helperDone && micState !== "done");
-  mark(keyStep, keyState === "done", false);
-  finish.dataset.ready = helperDone ? "true" : "false";
-}
-
-// The crawlio funnel: the moment the required permission is granted, hand the
-// user to the hosted guide. Only fires when the grant happened during THIS
-// visit, and never on the #microphone deep link from the side panel.
-function maybeAdvanceToGuide(): void {
-  if (helperState !== "done" || !helperWasIncomplete) return;
-  if (location.hash === "#microphone") return;
-  if (redirectTimer !== null) return;
-  redirectNote.hidden = false;
-  redirectTimer = window.setTimeout(() => {
-    window.location.href = GUIDE_URL + "/activate?from=extension";
-  }, REDIRECT_DELAY_MS);
-}
-
-function mark(step: HTMLElement, done: boolean, current: boolean): void {
-  step.classList.toggle("done", done);
-  step.classList.toggle("current", current && !done);
-}
-
-function showLines(step: HTMLElement, state: string): void {
-  for (const line of step.querySelectorAll<HTMLElement>("[data-when]")) {
-    line.hidden = line.dataset.when !== state;
-  }
-}
-
-function describeFailure(code: string, response: unknown): string {
-  const message = isRecord(response) && typeof response.error === "string"
-    ? response.error.slice(0, 300)
-    : "The helper did not answer.";
-  return code ? code + " — " + message : message;
-}
-
-function setError(element: HTMLElement, message: string | null): void {
-  element.hidden = message === null;
-  element.textContent = message ?? "";
-}
-
-function query<T extends HTMLElement = HTMLElement>(selector: string): T {
-  const element = document.querySelector<T>(selector);
-  if (!element) throw new Error("Missing wizard element: " + selector);
-  return element;
+  void navigator.permissions.query({ name: "microphone" as PermissionName }).then((result) => {
+    status = result;
+    result.addEventListener("change", apply);
+    apply();
+  }).catch(() => show("intro"));
 }
 
 function runtimeSend<T = unknown>(message: unknown): Promise<T> {
