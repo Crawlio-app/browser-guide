@@ -9,6 +9,10 @@ public enum BrowserGuideHostConstants {
     public static let maximumSDPBytes = 512 * 1_024
     public static let maximumAPIKeyBytes = 503
     public static let maximumNativeResponseBytes = 1_024 * 1_024
+    // ~22s of 16 kHz mono 16-bit WAV fits the 768 KiB framed-request ceiling.
+    public static let maximumTranscribeAudioBytes = 700 * 1_024
+    public static let maximumCompletionPromptChars = 8_000
+    public static let maximumSpeakTextChars = 4_000
     public static let unknownRequestID = "00000000-0000-4000-8000-000000000000"
 }
 
@@ -23,6 +27,10 @@ public enum HostRequestType: String, Sendable {
     case memoryClear = "HOST_MEMORY_CLEAR"
     case publishEvidence = "HOST_PUBLISH_EVIDENCE"
     case clearEvidence = "HOST_CLEAR_EVIDENCE"
+    // Spike 3a (voice fallback) — reachable only from the spike probe, not the extension.
+    case transcribe = "HOST_TRANSCRIBE"
+    case complete = "HOST_COMPLETE"
+    case speak = "HOST_SPEAK"
 }
 
 public enum RealtimeMode: String, Sendable {
@@ -39,6 +47,9 @@ public enum HostRequestPayload: Sendable, Equatable {
     case memoryAppend(origin: String, question: String, answer: String)
     case memoryClear(origin: String?)
     case publishEvidence(origin: String, title: String, evidence: String)
+    case transcribe(wavData: Data)
+    case complete(prompt: String)
+    case speak(text: String)
 }
 
 public struct HostRequest: Sendable, Equatable {
@@ -186,6 +197,34 @@ public enum HostProtocolCodec {
                 throw invalid("The memory payload is invalid.", requestID: requestID)
             }
             return HostRequest(requestID: requestID, type: type, payload: .memoryClear(origin: origin))
+
+        case .transcribe:
+            let payload = try exactPayload(object["payload"], keys: ["audio", "format"], requestID: requestID)
+            guard payload["format"] as? String == "wav",
+                  let encoded = payload["audio"] as? String,
+                  let wavData = Data(base64Encoded: encoded),
+                  wavData.count >= 44,
+                  wavData.count <= BrowserGuideHostConstants.maximumTranscribeAudioBytes,
+                  wavData.prefix(4) == Data("RIFF".utf8) else {
+                throw invalid("The transcription payload is invalid.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .transcribe(wavData: wavData))
+
+        case .complete:
+            let payload = try exactPayload(object["payload"], keys: ["prompt"], requestID: requestID)
+            guard let prompt = payload["prompt"] as? String, !prompt.isEmpty,
+                  prompt.count <= BrowserGuideHostConstants.maximumCompletionPromptChars else {
+                throw invalid("The completion payload is invalid.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .complete(prompt: prompt))
+
+        case .speak:
+            let payload = try exactPayload(object["payload"], keys: ["text"], requestID: requestID)
+            guard let text = payload["text"] as? String, !text.isEmpty,
+                  text.count <= BrowserGuideHostConstants.maximumSpeakTextChars else {
+                throw invalid("The speech payload is invalid.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .speak(text: text))
 
         case .createSession:
             let payload = try exactPayload(object["payload"], keys: ["sdp", "mode"], requestID: requestID)

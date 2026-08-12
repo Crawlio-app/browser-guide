@@ -16,6 +16,8 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("LocalAuthentication"),
                 .linkedFramework("Security"),
+                .linkedFramework("Speech"),
+                .linkedFramework("AVFoundation"),
             ]
         ),
         .executableTarget(

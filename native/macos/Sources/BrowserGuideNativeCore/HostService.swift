@@ -6,19 +6,28 @@ public struct BrowserGuideHostService: Sendable {
     private let memory: SiteMemoryStore?
     private let evidence: SharedEvidenceStore?
     private let realtimeClient: RealtimeClient
+    private let transcriber: SpeechTranscriber?
+    private let anthropicClient: AnthropicClient?
+    private let speaker: SpeechSpeaker?
 
     public init(
         keyStore: any APIKeyStoring,
         importer: (any CredentialImporting)? = nil,
         memory: SiteMemoryStore? = nil,
         evidence: SharedEvidenceStore? = nil,
-        realtimeClient: RealtimeClient = RealtimeClient()
+        realtimeClient: RealtimeClient = RealtimeClient(),
+        transcriber: SpeechTranscriber? = nil,
+        anthropicClient: AnthropicClient? = nil,
+        speaker: SpeechSpeaker? = nil
     ) {
         self.keyStore = keyStore
         self.importer = importer
         self.memory = memory
         self.evidence = evidence
         self.realtimeClient = realtimeClient
+        self.transcriber = transcriber
+        self.anthropicClient = anthropicClient
+        self.speaker = speaker
     }
 
     public init(realtimeClient: RealtimeClient = RealtimeClient()) {
@@ -28,7 +37,10 @@ public struct BrowserGuideHostService: Sendable {
             importer: store,
             memory: SiteMemoryStore(),
             evidence: SharedEvidenceStore(),
-            realtimeClient: realtimeClient
+            realtimeClient: realtimeClient,
+            transcriber: SpeechTranscriber(),
+            anthropicClient: AnthropicClient(),
+            speaker: SpeechSpeaker()
         )
     }
 
@@ -130,6 +142,31 @@ public struct BrowserGuideHostService: Sendable {
             evidence?.clear()
             return ["cleared": true]
 
+        case .transcribe(let wavData) where request.type == .transcribe:
+            guard let transcriber else { throw spikeUnavailable(request) }
+            do {
+                return ["transcript": try await transcriber.transcribe(wavData: wavData)]
+            } catch let error as SpeechTranscriberError {
+                throw mapTranscriberError(error, requestID: request.requestID)
+            }
+
+        case .complete(let prompt) where request.type == .complete:
+            guard let anthropicClient, let importer else { throw spikeUnavailable(request) }
+            guard let accessToken = try importer.freshAnthropicAccessToken(now: Date()) else {
+                throw HostFailure(
+                    code: .notConfigured,
+                    message: "Connect your Claude Code sign-in first — the voice fallback answers with your own Claude token.",
+                    retryable: false,
+                    requestID: request.requestID
+                )
+            }
+            return ["text": try await anthropicClient.complete(prompt: prompt, accessToken: accessToken)]
+
+        case .speak(let text) where request.type == .speak:
+            guard let speaker else { throw spikeUnavailable(request) }
+            speaker.speak(text)
+            return ["speaking": true]
+
         case .createSession(let sdp, let mode) where request.type == .createSession:
             guard let apiKey = try keyStore.readAPIKey() else {
                 throw HostFailure(
@@ -163,6 +200,55 @@ public struct BrowserGuideHostService: Sendable {
                 message: "The native request payload does not match its type.",
                 retryable: false,
                 requestID: request.requestID
+            )
+        }
+    }
+
+    private func spikeUnavailable(_ request: HostRequest) -> HostFailure {
+        HostFailure(
+            code: .internalError,
+            message: "The voice fallback is unavailable in this host build.",
+            retryable: false,
+            requestID: request.requestID
+        )
+    }
+
+    private func mapTranscriberError(_ error: SpeechTranscriberError, requestID: String) -> HostFailure {
+        switch error {
+        case .notAuthorized:
+            return HostFailure(
+                code: .notConfigured,
+                message: "Speech recognition permission is required. Grant it in System Settings > Privacy & Security > Speech Recognition.",
+                retryable: false,
+                requestID: requestID
+            )
+        case .onDeviceUnavailable:
+            return HostFailure(
+                code: .internalError,
+                message: "On-device speech recognition is unavailable for English on this Mac; the fallback never sends audio to a server.",
+                retryable: false,
+                requestID: requestID
+            )
+        case .unreadableAudio:
+            return HostFailure(
+                code: .invalidRequest,
+                message: "The recorded audio could not be read.",
+                retryable: false,
+                requestID: requestID
+            )
+        case .recognitionFailed(let reason):
+            return HostFailure(
+                code: .internalError,
+                message: "Speech recognition failed: \(reason)",
+                retryable: true,
+                requestID: requestID
+            )
+        case .emptyTranscript:
+            return HostFailure(
+                code: .invalidRequest,
+                message: "No speech was detected in the recording.",
+                retryable: true,
+                requestID: requestID
             )
         }
     }

@@ -1,6 +1,13 @@
 # Spike 3a — Voice without OpenAI Realtime
 
-**Status: proposal, awaiting decision. Nothing here is merged behavior.**
+**Status: prototype built on the `spike/voice-fallback` branch, awaiting live measurement + merge decision. Nothing here ships on `main`.**
+
+## Prototype findings (2026-08-12)
+
+- The helper gained three spike-only messages — `HOST_TRANSCRIBE` (SFSpeechRecognizer, `requiresOnDeviceRecognition = true`), `HOST_COMPLETE` (Anthropic Messages API with the imported Claude token via the Fase 1a `freshAnthropicAccessToken` re-sync), and `HOST_SPEAK` (AVSpeechSynthesizer) — unreachable from the extension; the model tool surface is unchanged.
+- **Audio format correction to the original proposal**: AVFoundation cannot decode MediaRecorder's webm/opus, so the panel-side design captures PCM (AudioWorklet) and ships 16 kHz mono 16-bit WAV instead. The 768 KiB request ceiling then caps one utterance at ~22 s — fine for push-to-talk, and chunking can lift it later.
+- **Claude Code credential discovery (macOS)**: the sign-in does NOT live in `~/.claude/.credentials.json` on Macs — that is the Linux path. It lives in the login Keychain under services prefixed `Claude Code-credentials` (including per-profile suffixed variants, some holding only MCP-server tokens). The importer now enumerates those items and picks the sign-in with the freshest `expiresAt`. This fix applies to the *product's* claude-code import too, which silently never worked on Keychain-based Macs.
+- Run the measurement loop with `npm run spike:voice` (from a real terminal — macOS will ask once for Speech Recognition permission and once for Keychain access, both attributed to your terminal). It speaks a fixture question with the system voice, transcribes it on-device, answers through your own Claude token, and speaks the answer aloud, printing per-stage latency.
 
 ## Problem
 
