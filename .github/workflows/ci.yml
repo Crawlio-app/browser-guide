@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and integration tests
+        run: npm run test
+
+      - name: Build extension and helper
+        run: npm run build
+
+      - name: Swift and native host tests
+        run: npm run test:native
+
+      - name: Forbidden-capability and secret guards
+        run: npm run guard:forbidden && npm run guard:secrets
+
+      # Chrome end-to-end tests self-skip when no Playwright Chromium build is
+      # present; install one so they run in CI too.
+      - name: Install Chromium for e2e
+        run: npx playwright-core install chromium || npx playwright install chromium || echo "chromium install unavailable; e2e will self-skip"
+
+      - name: Chrome end-to-end tests
+        run: npm run test:e2e

@@ -1,0 +1,240 @@
+import CoreFoundation
+import Foundation
+
+public enum BrowserGuideHostConstants {
+    public static let hostName = "com.crawlio.browser_guide"
+    public static let protocolVersion = 1
+    public static let hostVersion = "1.0.0"
+    public static let realtimeModel = "gpt-realtime"
+    public static let maximumSDPBytes = 512 * 1_024
+    public static let maximumAPIKeyBytes = 503
+    public static let maximumNativeResponseBytes = 1_024 * 1_024
+    public static let unknownRequestID = "00000000-0000-4000-8000-000000000000"
+}
+
+public enum HostRequestType: String, Sendable {
+    case health = "HOST_HEALTH"
+    case configureKey = "HOST_CONFIGURE_KEY"
+    case forgetKey = "HOST_FORGET_KEY"
+    case createSession = "HOST_CREATE_SESSION"
+}
+
+public enum RealtimeMode: String, Sendable {
+    case text
+    case voice
+}
+
+public enum HostRequestPayload: Sendable, Equatable {
+    case none
+    case configureKey(String)
+    case createSession(sdp: String, mode: RealtimeMode)
+}
+
+public struct HostRequest: Sendable, Equatable {
+    public let requestID: String
+    public let type: HostRequestType
+    public let payload: HostRequestPayload
+
+    public init(requestID: String, type: HostRequestType, payload: HostRequestPayload) {
+        self.requestID = requestID
+        self.type = type
+        self.payload = payload
+    }
+}
+
+public struct HostFailure: Error, Equatable, Sendable {
+    public enum Code: String, Sendable {
+        case invalidRequest = "INVALID_REQUEST"
+        case unsupportedVersion = "UNSUPPORTED_VERSION"
+        case payloadTooLarge = "PAYLOAD_TOO_LARGE"
+        case notConfigured = "NOT_CONFIGURED"
+        case invalidAPIKey = "INVALID_API_KEY"
+        case rateLimited = "RATE_LIMITED"
+        case secureStorageError = "SECURE_STORAGE_ERROR"
+        case upstreamError = "UPSTREAM_ERROR"
+        case internalError = "INTERNAL_ERROR"
+    }
+
+    public let code: Code
+    public let message: String
+    public let retryable: Bool
+    public let requestID: String
+
+    public init(code: Code, message: String, retryable: Bool, requestID: String) {
+        self.code = code
+        self.message = String(message.prefix(1_000))
+        self.retryable = retryable
+        self.requestID = requestID
+    }
+}
+
+public enum HostProtocolCodec {
+    public static func decodeRequest(_ data: Data) throws -> HostRequest {
+        guard data.count <= NativeMessageFrameDecoder.defaultMaximumMessageBytes else {
+            throw HostFailure(
+                code: .payloadTooLarge,
+                message: "The native message exceeds the allowed size.",
+                retryable: false,
+                requestID: BrowserGuideHostConstants.unknownRequestID
+            )
+        }
+
+        let raw: Any
+        do {
+            raw = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw invalid("The native message is not valid JSON.")
+        }
+        guard let object = raw as? [String: Any] else {
+            throw invalid("The native message must be a JSON object.")
+        }
+
+        let candidateRequestID = validRequestID(object["requestId"])
+            ? object["requestId"] as? String ?? BrowserGuideHostConstants.unknownRequestID
+            : BrowserGuideHostConstants.unknownRequestID
+        let rootKeys = Set(object.keys)
+        guard rootKeys.isSubset(of: ["version", "requestId", "type", "payload"]),
+              rootKeys.isSuperset(of: ["version", "requestId", "type"]) else {
+            throw invalid("The native request contains missing or unsupported fields.", requestID: candidateRequestID)
+        }
+        guard isInteger(object["version"], equalTo: BrowserGuideHostConstants.protocolVersion) else {
+            throw HostFailure(
+                code: .unsupportedVersion,
+                message: "Unsupported native messaging protocol version.",
+                retryable: false,
+                requestID: candidateRequestID
+            )
+        }
+        guard let requestID = object["requestId"] as? String, validRequestID(requestID) else {
+            throw invalid("requestId must be a canonical UUID.")
+        }
+        guard let typeName = object["type"] as? String, let type = HostRequestType(rawValue: typeName) else {
+            throw invalid("The native request type is unsupported.", requestID: requestID)
+        }
+
+        switch type {
+        case .health, .forgetKey:
+            guard object["payload"] == nil else {
+                throw invalid("This native request must omit payload.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .none)
+
+        case .configureKey:
+            let payload = try exactPayload(object["payload"], keys: ["key"], requestID: requestID)
+            guard let key = payload["key"] as? String else {
+                throw invalid("The key payload is invalid.", requestID: requestID)
+            }
+            let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed == key,
+                  trimmed.lengthOfBytes(using: .utf8) <= BrowserGuideHostConstants.maximumAPIKeyBytes,
+                  trimmed.range(of: #"^sk-[A-Za-z0-9_-]{20,500}$"#, options: .regularExpression) != nil else {
+                throw invalid("Enter a valid OpenAI API key.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .configureKey(trimmed))
+
+        case .createSession:
+            let payload = try exactPayload(object["payload"], keys: ["sdp", "mode"], requestID: requestID)
+            guard let sdp = payload["sdp"] as? String,
+                  let modeName = payload["mode"] as? String,
+                  let mode = RealtimeMode(rawValue: modeName) else {
+                throw invalid("The session payload is invalid.", requestID: requestID)
+            }
+            guard isValidSDP(sdp) else {
+                let code: HostFailure.Code = sdp.lengthOfBytes(using: .utf8) > BrowserGuideHostConstants.maximumSDPBytes
+                    ? .payloadTooLarge
+                    : .invalidRequest
+                throw HostFailure(
+                    code: code,
+                    message: code == .payloadTooLarge
+                        ? "The WebRTC session description exceeds the allowed size."
+                        : "The WebRTC session description is invalid.",
+                    retryable: false,
+                    requestID: requestID
+                )
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .createSession(sdp: sdp, mode: mode))
+        }
+    }
+
+    public static func success(requestID: String, data: [String: Any]) throws -> Data {
+        let encoded = try encode([
+            "version": BrowserGuideHostConstants.protocolVersion,
+            "requestId": requestID,
+            "ok": true,
+            "data": data,
+        ])
+        guard encoded.count <= BrowserGuideHostConstants.maximumNativeResponseBytes else {
+            throw HostFailure(
+                code: .payloadTooLarge,
+                message: "The native response exceeds the allowed size.",
+                retryable: false,
+                requestID: requestID
+            )
+        }
+        return encoded
+    }
+
+    public static func failure(_ failure: HostFailure) throws -> Data {
+        try encode([
+            "version": BrowserGuideHostConstants.protocolVersion,
+            "requestId": failure.requestID,
+            "ok": false,
+            "error": [
+                "code": failure.code.rawValue,
+                "message": failure.message,
+                "retryable": failure.retryable,
+            ],
+        ])
+    }
+
+    public static func isValidSDP(_ value: String) -> Bool {
+        let size = value.lengthOfBytes(using: .utf8)
+        return size >= 4
+            && size <= BrowserGuideHostConstants.maximumSDPBytes
+            && (value.hasPrefix("v=0\r\n") || value.hasPrefix("v=0\n"))
+    }
+
+    private static func exactPayload(
+        _ rawPayload: Any?,
+        keys: Set<String>,
+        requestID: String
+    ) throws -> [String: Any] {
+        guard let payload = rawPayload as? [String: Any], Set(payload.keys) == keys else {
+            throw invalid("The native request payload contains missing or unsupported fields.", requestID: requestID)
+        }
+        return payload
+    }
+
+    private static func validRequestID(_ raw: Any?) -> Bool {
+        guard let value = raw as? String else { return false }
+        return value.range(
+            of: #"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    private static func isInteger(_ raw: Any?, equalTo expected: Int) -> Bool {
+        guard let number = raw as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
+        return number.intValue == expected && number.doubleValue == Double(expected)
+    }
+
+    private static func invalid(
+        _ message: String,
+        requestID: String = BrowserGuideHostConstants.unknownRequestID
+    ) -> HostFailure {
+        HostFailure(code: .invalidRequest, message: message, retryable: false, requestID: requestID)
+    }
+
+    private static func encode(_ object: [String: Any]) throws -> Data {
+        guard JSONSerialization.isValidJSONObject(object) else {
+            throw HostFailure(
+                code: .internalError,
+                message: "The native host could not encode its response.",
+                retryable: false,
+                requestID: object["requestId"] as? String ?? BrowserGuideHostConstants.unknownRequestID
+            )
+        }
+        return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+}

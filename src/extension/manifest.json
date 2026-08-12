@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Crawlio Browser Guide",
+  "short_name": "Browser Guide",
+  "version": "0.5.0",
+  "description": "A read-only voice and visual guide for the page you choose to share. It explains and points - it never acts.",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtetNCafSn9HTZ55s1ac660CqQym9nHoZl9PJZVDoBnpMdvC+Hehwq6XYh+/SvfKcuFIbPdMIYRn8tJTYokgO9cLN3zenmtJZKgeVC2tryqt93hP4NaUJ7fLj0mTedBvaoIcblLPH5c2Pmkr6BPwsRUxi5xABWDh5YRGfYszEmAMdPeMdHf9AHC/vSR1rb2q6inHcJUcSbkR3Sbh9XWrVLRVyrfXQA/ss7wkRwAiIVOQORPAf+kDFpLqePsxVv2TwhyFRI4VHFTp9A9ImMgoCDwWSdPVd0Z+Mj/PU8ykitIz77ryjdChhjvQ0zubuaB/sY2hOb4yDklzCStrJy1aWCwIDAQAB",
+  "permissions": ["activeTab", "scripting", "storage", "sidePanel"],
+  "optional_permissions": ["nativeMessaging"],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Open Browser Guide side panel",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_ui": {
+    "page": "welcome.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "toggle-listening": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+G",
+        "mac": "Command+Shift+G"
+      },
+      "description": "Toggle Browser Guide listening"
+    },
+    "start-voice": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Space",
+        "mac": "Command+Shift+Space"
+      },
+      "description": "Start Browser Guide voice"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'none'"
+  }
+}

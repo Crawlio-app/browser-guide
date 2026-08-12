@@ -1,0 +1,53 @@
+{
+  "name": "crawlio-browser-guide",
+  "version": "0.5.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Crawlio Browser Guide - a read-only Chrome side-panel guide that explains the page and points, but never acts.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "pretest": "npm run build:extension",
+    "build": "node scripts/build.mjs all && npm run guard:forbidden && npm run guard:secrets",
+    "build:extension": "node scripts/build.mjs extension && npm run guard:forbidden && npm run guard:secrets",
+    "build:helper": "node scripts/build.mjs helper",
+    "install:helper": "node scripts/install-helper.mjs",
+    "uninstall:helper": "node scripts/uninstall-helper.mjs",
+    "validate:helper": "node scripts/validate-helper.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run tests/unit tests/integration",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:native": "swift test --package-path native/macos && node --test tests/native/native-host-process.test.mjs",
+    "pretest:e2e": "npm run build:extension",
+    "test:e2e": "vitest run tests/e2e --no-file-parallelism",
+    "smoke:live": "node scripts/live-smoke.mjs",
+    "guard:forbidden": "node scripts/guard-forbidden.mjs",
+    "guard:secrets": "node scripts/guard-secrets.mjs",
+    "verify:parent": "node scripts/verify-parent.mjs",
+    "verify:product": "npm run typecheck && npm run test && npm run build && npm run validate:helper && npm run test:native && npm run test:e2e",
+    "verify": "npm run verify:product && npm run verify:parent"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.326",
+    "@types/node": "^22.17.1",
+    "@types/react": "^19.1.9",
+    "@types/react-dom": "^19.1.7",
+    "esbuild": "^0.25.8",
+    "jsdom": "^26.1.0",
+    "playwright-core": "^1.54.2",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Crawlio-app/browser-guide.git"
+  },
+  "homepage": "https://browser-guide-docs.vercel.app"
+}

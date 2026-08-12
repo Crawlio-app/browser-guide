@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Set up Browser Guide</title>
+    <link rel="stylesheet" href="welcome.css" />
+  </head>
+  <body>
+    <main class="wizard-shell">
+      <section class="wizard-card">
+        <span class="wizard-beacon" aria-hidden="true"><i></i></span>
+        <p class="wizard-kicker">Welcome</p>
+        <h1>Set up Browser Guide</h1>
+        <p class="wizard-subtitle">One permission and you are guiding. Everything stays local to this Mac.</p>
+
+        <ol class="stepper">
+          <li class="step done" id="step-install">
+            <span class="step-dot" aria-hidden="true"></span>
+            <div class="step-body">
+              <h2>Install the extension</h2>
+              <p class="step-line">Done — you are reading this from it.</p>
+            </div>
+          </li>
+
+          <li class="step" id="step-helper" data-state="checking">
+            <span class="step-dot" aria-hidden="true"></span>
+            <div class="step-body">
+              <h2>Allow the local helper</h2>
+              <p class="step-line" data-when="checking">Checking this Mac…</p>
+              <p class="step-line" data-when="permission" hidden>Chrome asks once for permission to talk to the Browser Guide helper on this Mac. Nothing leaves your computer.</p>
+              <p class="step-line" data-when="missing" hidden>Chrome could not reach the helper. Choose <strong>Allow the helper</strong> first; if it still fails, reload the extension at <code>chrome://extensions</code> or restart Chrome, then check again.</p>
+              <p class="step-line" data-when="done" hidden>The helper is connected.</p>
+              <div class="step-actions">
+                <button id="helper-allow" class="wizard-action" type="button" hidden>Allow the helper</button>
+                <button id="helper-recheck" class="wizard-action ghost" type="button" hidden>Check again</button>
+              </div>
+              <p class="step-error" id="helper-error" role="status" hidden></p>
+            </div>
+          </li>
+
+          <li class="step" id="step-mic" data-state="checking">
+            <span class="step-dot" aria-hidden="true"></span>
+            <div class="step-body">
+              <h2>Allow the microphone <span class="step-tag">optional — skip if you only type</span></h2>
+              <p class="step-line" data-when="checking">Checking the current permission…</p>
+              <p class="step-line" data-when="intro" hidden>Only needed for spoken questions, and only active while you are talking to the guide. Typed questions never use it.</p>
+              <p class="step-line" data-when="denied" hidden>Chrome currently blocks the microphone for Browser Guide. Open a new tab, paste the address below, set <strong>Microphone</strong> to <strong>Allow</strong>, then try again.</p>
+              <p class="step-line" data-when="missing" hidden>No microphone was found. Connect or enable one, then try again.</p>
+              <p class="step-line" data-when="done" hidden>Permission granted. The microphone turns on only while you are speaking to the guide — never in the background.</p>
+              <div class="mic-address" id="mic-address-row" hidden>
+                <code id="settings-address"></code>
+                <button id="copy-address" type="button">Copy</button>
+              </div>
+              <div class="step-actions">
+                <button id="mic-enable" class="wizard-action" type="button" hidden>Enable microphone</button>
+                <button id="mic-retry" class="wizard-action ghost" type="button" hidden>Try again</button>
+              </div>
+              <p class="step-hint" id="mic-hint" hidden>If Chrome never asks at all, also allow Google Chrome to use the microphone in System Settings &rsaquo; Privacy &amp; Security &rsaquo; Microphone.</p>
+            </div>
+          </li>
+
+          <li class="step" id="step-key" data-state="waiting">
+            <span class="step-dot" aria-hidden="true"></span>
+            <div class="step-body">
+              <h2>Add your OpenAI key <span class="step-tag">optional here — the panel asks when needed</span></h2>
+              <p class="step-line" data-when="waiting">You can add it now or skip; the side panel requests it before the first question.</p>
+              <p class="step-line" data-when="missing" hidden>Paste a newly issued OpenAI Platform key, or skip — the side panel will ask before your first question. Keys go straight to macOS Keychain, never into Chrome.</p>
+              <p class="step-line" data-when="done" hidden>Stored in macOS Keychain.</p>
+              <form id="key-form" class="key-form" hidden>
+                <label for="wizard-key">OpenAI API key</label>
+                <input id="wizard-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-proj-…" />
+                <button id="key-save" class="wizard-action" type="submit" disabled>Save to Keychain</button>
+              </form>
+              <p class="step-error" id="key-error" role="status" hidden></p>
+            </div>
+          </li>
+        </ol>
+
+        <div class="wizard-finish" id="finish" data-ready="false">
+          <div class="finish-copy">
+            <h2>Start guiding</h2>
+            <p>Open any page, click the Browser Guide toolbar icon, and ask. The guide explains and points — it never clicks or types for you.</p>
+            <p class="redirect-note" id="redirect-note" hidden>Permission granted — taking you to the guide…</p>
+          </div>
+          <a class="wizard-action finish-link" id="docs-link" href="https://browser-guide-docs.vercel.app" target="_blank" rel="noreferrer">Read the guide</a>
+        </div>
+
+        <p class="wizard-privacy"><span aria-hidden="true"></span>Keys live in macOS Keychain. Page evidence goes only to OpenAI, only when you ask.</p>
+      </section>
+    </main>
+    <script src="welcome.js"></script>
+  </body>
+</html>
