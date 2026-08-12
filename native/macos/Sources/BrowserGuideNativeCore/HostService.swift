@@ -8,7 +8,6 @@ public struct BrowserGuideHostService: Sendable {
     private let realtimeClient: RealtimeClient
     private let transcriber: SpeechTranscriber?
     private let anthropicClient: AnthropicClient?
-    private let speaker: SpeechSpeaker?
 
     public init(
         keyStore: any APIKeyStoring,
@@ -17,8 +16,7 @@ public struct BrowserGuideHostService: Sendable {
         evidence: SharedEvidenceStore? = nil,
         realtimeClient: RealtimeClient = RealtimeClient(),
         transcriber: SpeechTranscriber? = nil,
-        anthropicClient: AnthropicClient? = nil,
-        speaker: SpeechSpeaker? = nil
+        anthropicClient: AnthropicClient? = nil
     ) {
         self.keyStore = keyStore
         self.importer = importer
@@ -27,7 +25,6 @@ public struct BrowserGuideHostService: Sendable {
         self.realtimeClient = realtimeClient
         self.transcriber = transcriber
         self.anthropicClient = anthropicClient
-        self.speaker = speaker
     }
 
     public init(realtimeClient: RealtimeClient = RealtimeClient()) {
@@ -39,8 +36,7 @@ public struct BrowserGuideHostService: Sendable {
             evidence: SharedEvidenceStore(),
             realtimeClient: realtimeClient,
             transcriber: SpeechTranscriber(),
-            anthropicClient: AnthropicClient(),
-            speaker: SpeechSpeaker()
+            anthropicClient: AnthropicClient()
         )
     }
 
@@ -161,11 +157,6 @@ public struct BrowserGuideHostService: Sendable {
                 )
             }
             return ["text": try await anthropicClient.complete(prompt: prompt, accessToken: accessToken)]
-
-        case .speak(let text) where request.type == .speak:
-            guard let speaker else { throw spikeUnavailable(request) }
-            speaker.speak(text)
-            return ["speaking": true]
 
         case .createSession(let sdp, let mode) where request.type == .createSession:
             guard let apiKey = try keyStore.readAPIKey() else {

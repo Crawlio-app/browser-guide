@@ -100,15 +100,16 @@ const { text } = await timed("complete (Claude, your token)", "HOST_COMPLETE", {
 });
 console.log(`Answer: "${text}"`);
 
-await timed("speak (AVSpeech enqueue)", "HOST_SPEAK", { text });
+// In the product, the panel speaks the answer with speechSynthesis (the same
+// local system voice `say` uses) — so the demo and the latency proxy are `say`.
+const speakStart = performance.now();
+execFileSync("say", [text.slice(0, 400)]);
+timings.push(["speak (local system voice, full utterance)", Math.round(performance.now() - speakStart)]);
 
 console.log("\nStage timings:");
 for (const [label, elapsed] of timings) console.log(`  ${String(elapsed).padStart(6)} ms  ${label}`);
 const loop = timings.filter(([label]) => !label.startsWith("import")).reduce((sum, [, ms]) => sum + ms, 0);
 console.log(`  ${String(loop).padStart(6)} ms  end-to-end (stop speaking -> speech starts)`);
 
-console.log("\nListen — the answer is playing on this Mac. Closing in 12s.");
-setTimeout(() => {
-  child.stdin.end();
-  process.exit(0);
-}, 12_000);
+child.stdin.end();
+process.exit(0);

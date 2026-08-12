@@ -12,7 +12,6 @@ public enum BrowserGuideHostConstants {
     // ~22s of 16 kHz mono 16-bit WAV fits the 768 KiB framed-request ceiling.
     public static let maximumTranscribeAudioBytes = 700 * 1_024
     public static let maximumCompletionPromptChars = 8_000
-    public static let maximumSpeakTextChars = 4_000
     public static let unknownRequestID = "00000000-0000-4000-8000-000000000000"
 }
 
@@ -30,7 +29,6 @@ public enum HostRequestType: String, Sendable {
     // Spike 3a (voice fallback) — reachable only from the spike probe, not the extension.
     case transcribe = "HOST_TRANSCRIBE"
     case complete = "HOST_COMPLETE"
-    case speak = "HOST_SPEAK"
 }
 
 public enum RealtimeMode: String, Sendable {
@@ -49,7 +47,6 @@ public enum HostRequestPayload: Sendable, Equatable {
     case publishEvidence(origin: String, title: String, evidence: String)
     case transcribe(wavData: Data)
     case complete(prompt: String)
-    case speak(text: String)
 }
 
 public struct HostRequest: Sendable, Equatable {
@@ -217,14 +214,6 @@ public enum HostProtocolCodec {
                 throw invalid("The completion payload is invalid.", requestID: requestID)
             }
             return HostRequest(requestID: requestID, type: type, payload: .complete(prompt: prompt))
-
-        case .speak:
-            let payload = try exactPayload(object["payload"], keys: ["text"], requestID: requestID)
-            guard let text = payload["text"] as? String, !text.isEmpty,
-                  text.count <= BrowserGuideHostConstants.maximumSpeakTextChars else {
-                throw invalid("The speech payload is invalid.", requestID: requestID)
-            }
-            return HostRequest(requestID: requestID, type: type, payload: .speak(text: text))
 
         case .createSession:
             let payload = try exactPayload(object["payload"], keys: ["sdp", "mode"], requestID: requestID)
