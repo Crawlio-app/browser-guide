@@ -74,21 +74,33 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
     /// one-time consent prompt — exactly the user-visible boundary an import
     /// should have.
     static func readClaudeCodeKeychainItem() -> Data? {
-        let query: [String: Any] = [
+        // Phase 1: enumerate candidate services. macOS refuses to return item
+        // data on kSecMatchLimitAll queries, so this pass is attributes-only.
+        let listQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecReturnAttributes as String: true,
-            kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let items = result as? [[String: Any]] else { return nil }
+        var listResult: CFTypeRef?
+        guard SecItemCopyMatching(listQuery as CFDictionary, &listResult) == errSecSuccess,
+              let items = listResult as? [[String: Any]] else { return nil }
+        let services = items
+            .compactMap { $0[kSecAttrService as String] as? String }
+            .filter { $0.hasPrefix("Claude Code-credentials") }
 
+        // Phase 2: read each candidate individually and keep the freshest
+        // sign-in (profile items may hold only MCP-server tokens).
         var freshest: (expires: Double, payload: Data)?
-        for item in items {
-            guard let service = item[kSecAttrService as String] as? String,
-                  service.hasPrefix("Claude Code-credentials"),
-                  let payload = item[kSecValueData as String] as? Data,
+        for service in Set(services) {
+            let readQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecReturnData as String: true,
+                kSecMatchLimit as String: kSecMatchLimitOne,
+            ]
+            var readResult: CFTypeRef?
+            guard SecItemCopyMatching(readQuery as CFDictionary, &readResult) == errSecSuccess,
+                  let payload = readResult as? Data,
                   let object = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any],
                   let oauth = object["claudeAiOauth"] as? [String: Any],
                   oauth["accessToken"] is String else { continue }
