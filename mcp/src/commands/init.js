@@ -3,7 +3,7 @@ import { pingHost } from "../native-ping.js";
 
 export async function runInit(homeDir) {
   if (process.platform !== "darwin") {
-    console.error("init currently supports macOS only — the cross-platform helper is on its way. The `mcp` subcommand works everywhere.");
+    console.error("init currently supports macOS only; the cross-platform helper is on its way. The `mcp` subcommand works everywhere.");
     process.exitCode = 1;
     return;
   }
@@ -28,7 +28,7 @@ export async function runInit(homeDir) {
 
   try {
     const health = await pingHost(paths.hostPath);
-    console.error(`Host answers: ready (credential configured: ${health.configured ? "yes" : "no — connect one in the side panel for voice"})`);
+    console.error(`Host answers: ready (credential configured: ${health.configured ? "yes" : "no; connect one in the side panel for voice"})`);
   } catch (error) {
     console.error(`Warning: ${error instanceof Error ? error.message : String(error)}`);
     console.error("The registration files are in place; run `crawlio-browser-guide doctor` after fixing the above.");

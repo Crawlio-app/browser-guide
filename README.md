@@ -63,7 +63,15 @@ Then load the extension:
 
 No helper installed yet? The panel still works: **Try the demo first** runs the same practice tour with no binary, no credential, and no network — the helper is an upgrade, not a prerequisite.
 
-`npm run install:helper` registers the native messaging host for Chrome and Chrome for Testing at user level only. Remove it anytime with `npm run uninstall:helper`. The npm package can do the same with one command — `npx crawlio-browser-guide init`, checked by `... doctor`, removed by `... uninstall` — once it is published (`scripts/package-mcp-host.mjs` vendors the universal helper binary into it before `npm publish`).
+Prefer one command? The published npm package installs the helper without cloning anything:
+
+```sh
+npx crawlio-browser-guide init      # stage the bundled universal helper + register it with Chrome
+npx crawlio-browser-guide doctor    # check every link, including a live host ping
+npx crawlio-browser-guide uninstall # remove the registration
+```
+
+In a repo checkout, `npm run install:helper` registers the locally built host instead, and `npm run uninstall:helper` removes it. `scripts/package-mcp-host.mjs` vendors the universal helper binary into the npm package before each `npm publish`.
 
 ### Lend your coding agent the same eyes (optional)
 

@@ -1,4 +1,4 @@
-const USAGE = `crawlio-browser-guide — Crawlio Browser Guide companion CLI
+const USAGE = `crawlio-browser-guide: Crawlio Browser Guide companion CLI
 
 Usage:
   crawlio-browser-guide init       Install the native helper for Chrome (macOS)

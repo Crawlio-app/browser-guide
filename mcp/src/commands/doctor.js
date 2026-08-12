@@ -21,14 +21,14 @@ export async function runDoctor(homeDir) {
   const manifestHostPaths = new Set();
   for (const manifestPath of paths.manifestPaths) {
     if (!existsSync(manifestPath)) {
-      fail(`${manifestPath} is missing — run \`crawlio-browser-guide init\`.`);
+      fail(`${manifestPath} is missing; run \`crawlio-browser-guide init\`.`);
       continue;
     }
     let manifest;
     try {
       manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     } catch {
-      fail(`${manifestPath} is not valid JSON — run \`crawlio-browser-guide init\`.`);
+      fail(`${manifestPath} is not valid JSON; run \`crawlio-browser-guide init\`.`);
       continue;
     }
     if (manifest.name !== HOST_NAME || manifest.type !== "stdio"
@@ -36,7 +36,7 @@ export async function runDoctor(homeDir) {
       || manifest.allowed_origins.length !== 1
       || manifest.allowed_origins[0] !== EXTENSION_ORIGIN
       || typeof manifest.path !== "string") {
-      fail(`${manifestPath} has unexpected contents — run \`crawlio-browser-guide init\`.`);
+      fail(`${manifestPath} has unexpected contents; run \`crawlio-browser-guide init\`.`);
       continue;
     }
     manifestHostPaths.add(manifest.path);
@@ -47,18 +47,18 @@ export async function runDoctor(homeDir) {
   console.error("Host binary:");
   const hostPath = [...manifestHostPaths][0] ?? paths.hostPath;
   if (!existsSync(hostPath)) {
-    fail(`${hostPath} is missing — run \`crawlio-browser-guide init\`.`);
+    fail(`${hostPath} is missing; run \`crawlio-browser-guide init\`.`);
   } else {
     try {
       accessSync(hostPath, constants.X_OK);
     } catch {
-      fail(`${hostPath} is not executable — run \`crawlio-browser-guide init\`.`);
+      fail(`${hostPath} is not executable; run \`crawlio-browser-guide init\`.`);
     }
     if (!isMachO(hostPath)) fail(`${hostPath} is not a valid Mach-O executable.`);
     else pass(hostPath);
     const metadata = vendorMetadata();
     if (metadata?.sha256 && existsSync(hostPath) && sha256(hostPath) !== metadata.sha256) {
-      warn("The installed host differs from this package's binary — rerun init to update it.");
+      warn("The installed host differs from this package's binary; rerun init to update it.");
     }
   }
 
@@ -67,16 +67,16 @@ export async function runDoctor(homeDir) {
     try {
       const health = await pingHost(hostPath);
       pass(`HOST_HEALTH answers; credential configured: ${health.configured ? "yes" : "no"}`);
-      if (!health.configured) warn("No credential yet — voice needs one; connect it in the side panel.");
+      if (!health.configured) warn("No credential yet: voice needs one; connect it in the side panel.");
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
     }
   } else {
-    fail("Skipped — no host binary to ping.");
+    fail("Skipped: no host binary to ping.");
   }
 
   console.error("Agent eyes:");
-  console.error(`  info  ${existsSync(paths.eyesPath) ? "eyes.json present — the Eyes toggle is on." : "eyes.json absent — the Eyes toggle is off (the normal default)."}`);
+  console.error(`  info  ${existsSync(paths.eyesPath) ? "eyes.json present: the Eyes toggle is on." : "eyes.json absent: the Eyes toggle is off (the normal default)."}`);
 
   console.error("Not checkable from this CLI (verify in Chrome):");
   console.error("  - The Browser Guide extension is installed and pinned.");

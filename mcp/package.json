@@ -1,17 +1,19 @@
 {
   "name": "crawlio-browser-guide",
   "version": "0.5.0",
-  "description": "Local MCP eyes for Crawlio Browser Guide: lets Claude Code and Codex read the page snapshot the user chose to share. Read-only by construction.",
+  "description": "Companion CLI and read-only MCP server for Crawlio Browser Guide: install the native helper with one command, and let Claude Code or Codex see the browser page the user chose to share, with no way to act on it.",
   "license": "Apache-2.0",
+  "author": "Rashid Azarang <rashid.azarang.eg@gmail.com>",
   "type": "module",
   "bin": {
     "crawlio-browser-guide": "bin/crawlio-browser-guide.js"
   },
   "files": [
+    "NOTICE",
+    "README.md",
     "bin",
     "src",
-    "vendor",
-    "README.md"
+    "vendor"
   ],
   "engines": {
     "node": ">=20"
@@ -21,18 +23,26 @@
     "url": "git+https://github.com/Crawlio-app/browser-guide.git",
     "directory": "mcp"
   },
+  "homepage": "https://docs.crawlio.app/browser-guide/overview",
+  "bugs": {
+    "url": "https://github.com/Crawlio-app/browser-guide/issues"
+  },
   "keywords": [
     "mcp",
-    "chrome-extension",
+    "model-context-protocol",
     "crawlio",
     "browser-guide",
-    "read-only"
+    "chrome-extension",
+    "native-messaging",
+    "read-only",
+    "accessibility-snapshot",
+    "ai"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.0"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "prepublishOnly": "node -e \"import('./src/host-install.js').then(({isMachO, sha256, vendorMetadata}) => { const path = new URL('./vendor/macos/com.crawlio.browser_guide', import.meta.url).pathname; const meta = vendorMetadata(); if (!isMachO(path)) throw new Error('vendor host binary missing or invalid — run node ../scripts/package-mcp-host.mjs'); if (!meta || sha256(path) !== meta.sha256) throw new Error('vendor metadata is stale — rerun node ../scripts/package-mcp-host.mjs'); })\""
+    "prepublishOnly": "node -e \"import('./src/host-install.js').then(({isMachO, sha256, vendorMetadata}) => { const path = new URL('./vendor/macos/com.crawlio.browser_guide', import.meta.url).pathname; const meta = vendorMetadata(); if (!isMachO(path)) throw new Error('vendor host binary missing or invalid; run node ../scripts/package-mcp-host.mjs'); if (!meta || sha256(path) !== meta.sha256) throw new Error('vendor metadata is stale; rerun node ../scripts/package-mcp-host.mjs'); })\""
   }
 }

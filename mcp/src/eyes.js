@@ -12,7 +12,7 @@ export function eyesPath() {
 
 /**
  * Reads the snapshot the extension publishes while the "Eyes" toggle is on.
- * Absence of the file IS the off state — never treat it as an error.
+ * Absence of the file IS the off state; never treat it as an error.
  */
 export function readEyesSnapshot(path = eyesPath()) {
   let raw;
@@ -62,7 +62,7 @@ export function describeSnapshot(result, nowSeconds = Date.now() / 1000) {
       const { snapshot } = result;
       const ageSeconds = Math.max(0, Math.round(nowSeconds - snapshot.capturedAt));
       const staleness = ageSeconds > 120
-        ? `STALE: captured ${describeAge(ageSeconds)} ago — the user's page has likely changed since.`
+        ? `STALE: captured ${describeAge(ageSeconds)} ago; the user's page has likely changed since.`
         : `Captured ${describeAge(ageSeconds)} ago.`;
       return [
         `Page the Browser Guide user is currently sharing (read-only; you cannot act on it):`,
