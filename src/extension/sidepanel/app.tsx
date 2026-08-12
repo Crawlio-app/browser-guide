@@ -489,6 +489,13 @@ function BrowserGuideApp(): React.ReactElement {
     void runtimeSend<unknown>({ type: "GUIDE_GET_STATE" }).then((response) => {
       if (!mounted || !isRecord(response) || response.ok !== true || !isExtensionRuntimeState(response.state)) return;
       setRuntime(response.state);
+      // If the panel opened without a recorded toolbar grant, try to claim the
+      // active tab once - the icon click that opened us usually granted it.
+      if (response.state.status === "permission-paused" && response.state.pauseReason === "not-authorized") {
+        void runtimeSend<unknown>({ type: "GUIDE_RESUME_REQUEST" }).then((resume) => {
+          if (mounted && isRecord(resume) && isExtensionRuntimeState(resume.state)) setRuntime(resume.state);
+        }).catch(() => undefined);
+      }
     }).catch(() => {
       if (mounted) setIssue({ kind: "page", message: "Reload Browser Guide once to reconnect its background service." });
     });

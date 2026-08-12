@@ -245,7 +245,7 @@ function maybeAdvanceToGuide(): void {
   if (redirectTimer !== null) return;
   redirectNote.hidden = false;
   redirectTimer = window.setTimeout(() => {
-    window.location.href = GUIDE_URL + "/?from=extension";
+    window.location.href = GUIDE_URL + "/activate?from=extension";
   }, REDIRECT_DELAY_MS);
 }
 
