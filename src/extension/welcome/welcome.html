@@ -51,6 +51,14 @@
 
         <div class="divider"></div>
         <p id="connect-status" class="status-line" role="alert" hidden></p>
+        <div id="install-block" hidden>
+          <p class="install-line">Install the local helper with one command:</p>
+          <div class="command-row">
+            <code id="install-cmd">npx crawlio-browser-guide init</code>
+            <button id="copy-cmd" class="btn-copy" type="button" aria-label="Copy the install command">Copy</button>
+          </div>
+          <p class="install-hint">Paste it in Terminal. This page continues on its own the moment the helper answers.</p>
+        </div>
         <button id="connect-btn" class="btn btn-primary">Review &amp; Grant Access</button>
         <button id="recheck-btn" class="btn btn-ghost" hidden>Check helper again</button>
         <p class="brand-line">Browser Guide · open source, <a href="https://www.crawlio.app" target="_blank" rel="noreferrer">by Crawlio</a></p>

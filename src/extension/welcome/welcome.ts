@@ -27,6 +27,9 @@ const connectButton = requiredElement<HTMLButtonElement>("connect-btn");
 const recheckButton = requiredElement<HTMLButtonElement>("recheck-btn");
 const stepGrant = requiredElement<HTMLDivElement>("step-grant");
 const stepTour = requiredElement<HTMLDivElement>("step-tour");
+const installBlock = requiredElement<HTMLDivElement>("install-block");
+const copyCommandButton = requiredElement<HTMLButtonElement>("copy-cmd");
+const installCommand = requiredElement<HTMLElement>("install-cmd");
 const allSetMascot = requiredElement<HTMLElement>("allset-mascot");
 const modalOverlay = requiredElement<HTMLDivElement>("modal-overlay");
 const permissionList = requiredElement<HTMLUListElement>("permission-list");
@@ -132,11 +135,45 @@ recheckButton.addEventListener("click", () => {
   });
 });
 
+let helperPollTimer: number | null = null;
+let helperPollBusy = false;
+const HELPER_POLL_MS = 3_000;
+
 function enterRecheckMode(message: string): void {
   connectButton.hidden = true;
   recheckButton.hidden = false;
+  installBlock.hidden = false;
   setStatus(message);
+  // The wizard detects the helper by itself: paste the command in a terminal
+  // and this page advances the moment HOST_HEALTH answers. The manual button
+  // stays as a fallback.
+  if (helperPollTimer !== null) return;
+  helperPollTimer = window.setInterval(() => {
+    if (helperPollBusy) return;
+    helperPollBusy = true;
+    void helperHealth().then((health) => {
+      if (health.ok) finishOnboarding();
+    }).finally(() => {
+      helperPollBusy = false;
+    });
+  }, HELPER_POLL_MS);
 }
+
+function stopHelperPoll(): void {
+  if (helperPollTimer !== null) window.clearInterval(helperPollTimer);
+  helperPollTimer = null;
+}
+
+copyCommandButton.addEventListener("click", () => {
+  void navigator.clipboard.writeText(installCommand.textContent ?? "").then(() => {
+    copyCommandButton.textContent = "Copied";
+    window.setTimeout(() => {
+      copyCommandButton.textContent = "Copy";
+    }, 2_000);
+  }).catch(() => {
+    copyCommandButton.textContent = "Select and copy above";
+  });
+});
 
 function setStatus(message: string | null): void {
   connectStatus.hidden = message === null;
@@ -144,6 +181,8 @@ function setStatus(message: string | null): void {
 }
 
 function finishOnboarding(): void {
+  stopHelperPoll();
+  installBlock.hidden = true;
   markStepDone(stepGrant);
   stepTour.classList.add("current");
   connectTitle.textContent = "You're all set!";

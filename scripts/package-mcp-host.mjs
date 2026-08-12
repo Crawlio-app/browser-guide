@@ -40,6 +40,20 @@ if (origin !== expectedOrigin) {
 mkdirSync(vendorDirectory, { recursive: true });
 cpSync(source, destination);
 chmodSync(destination, 0o755);
+
+// Prefer a real Developer ID signature over the build's ad-hoc one when the
+// release machine has the identity. npm-extracted files carry no Gatekeeper
+// quarantine, so this is trust polish rather than a launch requirement.
+const developerId = await findDeveloperIdIdentity();
+if (developerId) {
+  await execFileAsync("/usr/bin/codesign", [
+    "--force", "--sign", developerId, "--timestamp", "--options", "runtime", destination,
+  ]);
+  await execFileAsync("/usr/bin/codesign", ["--verify", "--strict", destination]);
+  console.log(`Signed the vendored host with: ${developerId}`);
+} else {
+  console.log("No Developer ID Application identity found; keeping the build signature.");
+}
 writeFileSync(resolve(vendorDirectory, "metadata.json"), JSON.stringify({
   sha256: createHash("sha256").update(readFileSync(destination)).digest("hex"),
   origin,
@@ -48,6 +62,16 @@ writeFileSync(resolve(vendorDirectory, "metadata.json"), JSON.stringify({
 }, null, 2) + "\n");
 
 console.log(`Vendored ${archs.trim()} host into mcp/vendor/macos (${readFileSync(destination).length} bytes).`);
+
+async function findDeveloperIdIdentity() {
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"]);
+    const match = stdout.match(/"(Developer ID Application: [^"]+)"/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
 
 function extensionIdForKey(key) {
   const digest = createHash("sha256").update(Buffer.from(key, "base64")).digest().subarray(0, 16);

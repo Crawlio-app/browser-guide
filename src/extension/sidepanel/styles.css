@@ -747,6 +747,53 @@ input:disabled {
   color: var(--text-body);
 }
 
+.install-command {
+  margin: 0 0 12px;
+  text-align: left;
+}
+
+.install-command p {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.install-command .command-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.install-command code {
+  flex: 1;
+  padding: 9px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-body);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.install-command button {
+  flex: none;
+  padding: 0 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-body);
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.install-command button:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
 .brand-line a {
   color: var(--faint);
   text-decoration: none;

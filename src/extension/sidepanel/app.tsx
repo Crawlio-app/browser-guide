@@ -1220,6 +1220,30 @@ interface SetupViewProps {
   onDemo(): void;
 }
 
+const INSTALL_COMMAND = "npx crawlio-browser-guide init";
+
+function InstallCommandRow(): React.ReactElement {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="install-command">
+      <p>Install the local helper with one command, then press Check again:</p>
+      <div className="command-row">
+        <code>{INSTALL_COMMAND}</code>
+        <button
+          type="button"
+          aria-label="Copy the install command"
+          onClick={() => {
+            void navigator.clipboard.writeText(INSTALL_COMMAND).then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 2_000);
+            }).catch(() => undefined);
+          }}
+        >{copied ? "Copied" : "Copy"}</button>
+      </div>
+    </div>
+  );
+}
+
 function SetupView(props: SetupViewProps): React.ReactElement {
   const copy = setupCopy(props.state);
   return (
@@ -1262,6 +1286,7 @@ function SetupView(props: SetupViewProps): React.ReactElement {
         <button className="setup-action" type="button" onClick={() => void props.onPermission()}>Allow helper</button>
       ) : props.state === "helper-missing" ? (
         <>
+          <InstallCommandRow />
           <button className="setup-action" type="button" onClick={() => void props.onRetry()}>Check again</button>
           <button className="setup-secondary" type="button" onClick={props.onDemo}>Try the demo first</button>
         </>

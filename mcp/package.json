@@ -1,6 +1,6 @@
 {
   "name": "crawlio-browser-guide",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Companion CLI and read-only MCP server for Crawlio Browser Guide: install the native helper with one command, and let Claude Code or Codex see the browser page the user chose to share, with no way to act on it.",
   "license": "Apache-2.0",
   "author": "Rashid Azarang <rashid.azarang.eg@gmail.com>",
