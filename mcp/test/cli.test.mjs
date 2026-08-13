@@ -40,7 +40,7 @@ test("init + doctor + uninstall run a full cycle against a temp home", { skip: p
   if (existsSync(repoDist)) {
     const realEnv = { ...process.env, BROWSER_GUIDE_HOST_BINARY: repoDist };
     const realInit = await execFileAsync(process.execPath, [binPath, "init", "--home", home], { env: realEnv });
-    assert.match(realInit.stderr, /Host binary installed/);
+    assert.match(realInit.stderr, /Host installed/);
     assert.match(realInit.stderr, /Host answers: ready/);
 
     const doctor = await execFileAsync(process.execPath, [binPath, "doctor", "--home", home], { env: realEnv });

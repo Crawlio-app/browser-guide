@@ -39,6 +39,9 @@ jobs:
       - name: Swift and native host tests
         run: npm run test:native
 
+      - name: Node host conformance (same suite, Node port)
+        run: npm run test:native:node
+
       - name: MCP server tests
         run: npm --prefix mcp ci && npm run test:mcp
 

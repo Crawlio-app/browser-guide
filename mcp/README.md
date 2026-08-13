@@ -2,15 +2,15 @@
 
 The companion CLI and local MCP server for [Crawlio Browser Guide](https://github.com/Crawlio-app/browser-guide). It installs the native helper with one command and lets coding agents on your machine (Claude Code, Codex, or any MCP client) **see** the browser page you chose to share, without giving them any way to act on it.
 
-## Install the helper (macOS)
+## Install the helper
 
 ```sh
-npx crawlio-browser-guide init      # stage the helper + register it with Chrome
+npx crawlio-browser-guide init      # stage the helper + register it with Chrome (macOS, Windows, Linux)
 npx crawlio-browser-guide doctor    # check every link, including a live host ping
 npx crawlio-browser-guide uninstall # remove the registration (credentials stay)
 ```
 
-`init` ships the universal (arm64 + x86_64) helper binary inside this package, stages it to `~/Library/Application Support/Crawlio Browser Guide/`, and writes the Chrome native-messaging manifests byte-identically to the Swift installer. It is idempotent; rerun it anytime. Windows and Linux arrive with the cross-platform helper.
+On macOS, `init` stages the universal (arm64 + x86_64) Swift helper shipped inside this package, signed with a Developer ID, and writes the Chrome native-messaging manifests byte-identically to the Swift installer. On Windows and Linux it stages the package's own Node helper, which passes the exact protocol conformance suite the Swift host does. It is idempotent; rerun it anytime.
 
 ## How it works
 

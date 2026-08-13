@@ -39,8 +39,8 @@ See [AUDIT.md](AUDIT.md) for the complete security assessment and [PROVENANCE.md
 
 ## Requirements
 
-- macOS 13+ (Apple silicon or Intel), Chrome 116+
-- Node.js 20+, Xcode Command Line Tools with Swift 6
+- Chrome 116+ and Node.js 20+ (macOS 13+, Windows, or Linux via `npx crawlio-browser-guide init`)
+- Building the macOS helper from source additionally needs Xcode Command Line Tools with Swift 6
 - An OpenAI Platform API key (the Realtime API bills against it)
 
 ## Quick start
@@ -66,10 +66,12 @@ No helper installed yet? The panel still works: **Try the demo first** runs the 
 Prefer one command? The published npm package installs the helper without cloning anything:
 
 ```sh
-npx crawlio-browser-guide init      # stage the bundled universal helper + register it with Chrome
+npx crawlio-browser-guide init      # stage the bundled helper + register it with Chrome
 npx crawlio-browser-guide doctor    # check every link, including a live host ping
 npx crawlio-browser-guide uninstall # remove the registration
 ```
+
+On macOS `init` stages the signed universal Swift helper; on Windows and Linux it stages the package's Node helper, which passes the same protocol conformance suite (`npm run test:native:node`). Realtime voice works wherever Chrome and Node do.
 
 In a repo checkout, `npm run install:helper` registers the locally built host instead, and `npm run uninstall:helper` removes it. `scripts/package-mcp-host.mjs` vendors the universal helper binary into the npm package before each `npm publish`.
 

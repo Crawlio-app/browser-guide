@@ -1,33 +1,39 @@
+import { join } from "node:path";
 import { findHostBinary, hostPaths, installHost, isMachO } from "../host-install.js";
 import { pingHost } from "../native-ping.js";
 
 export async function runInit(homeDir) {
-  if (process.platform !== "darwin") {
-    console.error("init currently supports macOS only; the cross-platform helper is on its way. The `mcp` subcommand works everywhere.");
-    process.exitCode = 1;
-    return;
-  }
-  const source = findHostBinary();
-  if (!source) {
-    console.error("No native host binary was found. In a repo checkout run `npm run build:helper` first; from npm, reinstall the package.");
-    process.exitCode = 1;
-    return;
-  }
-  if (!isMachO(source)) {
-    console.error(`The host binary at ${source} is not a valid Mach-O executable. Reinstall the package.`);
-    process.exitCode = 1;
-    return;
+  // macOS installs the compiled Swift host shipped in this package; other
+  // platforms stage the package's own Node helper. Same command everywhere.
+  let source = null;
+  if (process.platform === "darwin") {
+    source = findHostBinary();
+    if (!source) {
+      console.error("No native host binary was found. In a repo checkout run `npm run build:helper` first; from npm, reinstall the package.");
+      process.exitCode = 1;
+      return;
+    }
+    if (!isMachO(source)) {
+      console.error(`The host binary at ${source} is not a valid Mach-O executable. Reinstall the package.`);
+      process.exitCode = 1;
+      return;
+    }
   }
 
   const report = installHost(source, homeDir);
   const paths = hostPaths(homeDir);
-  console.error(`Host binary ${report.binary}: ${paths.hostPath}`);
+  console.error(`Host ${report.binary}: ${paths.hostPath}`);
   for (const manifest of report.manifests) {
     console.error(`Manifest ${manifest.state}: ${manifest.path}`);
   }
+  for (const key of report.registry) {
+    console.error(`Registry key set: ${key}`);
+  }
 
   try {
-    const health = await pingHost(paths.hostPath);
+    const health = process.platform === "darwin"
+      ? await pingHost(paths.hostPath)
+      : await pingHost(process.execPath, 5_000, [join(paths.hostDirectory, "host-entry.js")]);
     console.error(`Host answers: ready (credential configured: ${health.configured ? "yes" : "no; connect one in the side panel for voice"})`);
   } catch (error) {
     console.error(`Warning: ${error instanceof Error ? error.message : String(error)}`);

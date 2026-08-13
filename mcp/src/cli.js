@@ -4,6 +4,8 @@ Usage:
   crawlio-browser-guide init       Install the native helper for Chrome (macOS)
   crawlio-browser-guide doctor     Check every link of the helper installation
   crawlio-browser-guide uninstall  Remove the helper registration
+  crawlio-browser-guide helper     Run the native messaging host over stdio
+                                   (Chrome spawns this; not for manual use)
   crawlio-browser-guide mcp        Run the MCP eyes server over stdio
                                    (register with your agent, e.g.:
                                    claude mcp add browser-guide -- npx -y crawlio-browser-guide mcp)
@@ -22,6 +24,11 @@ export async function main(argumentsList) {
     case "mcp": {
       const { runMcpServer } = await import("./mcp-server.js");
       await runMcpServer();
+      return;
+    }
+    case "helper": {
+      const { runHelper } = await import("./helper/host.js");
+      runHelper();
       return;
     }
     case "init": {

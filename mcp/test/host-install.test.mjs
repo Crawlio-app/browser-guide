@@ -87,6 +87,42 @@ test("findHostBinary prefers the env override, then vendor, then the repo dist b
   if (fallback !== null) assert.notEqual(fallback, override);
 });
 
+test("linux install stages the self-contained Node helper and answers a real ping", async (t) => {
+  const home = makeHome();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+
+  const report = installHost(null, home, "linux", {});
+  const paths = hostPaths(home, "linux", {});
+  assert.equal(report.binary, "installed");
+  assert.ok(existsSync(join(paths.hostDirectory, "helper", "host.js")));
+  assert.ok(existsSync(join(paths.hostDirectory, "host-entry.js")));
+  assert.match(readFileSync(paths.hostPath, "utf8"), /^#!\/bin\/sh\nexec /);
+  assert.equal(statSync(paths.hostPath).mode & 0o777, 0o755);
+  for (const manifestPath of paths.manifestPaths) {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    assert.equal(manifest.path, paths.hostPath);
+    assert.equal(manifest.name, "com.crawlio.browser_guide");
+  }
+  assert.ok(installHost(null, home, "linux", {}).binary === "up to date");
+
+  // The staged tree is self-contained: ping it exactly as Chrome would spawn it.
+  const { pingHost } = await import("../src/native-ping.js");
+  const health = await pingHost(paths.hostPath);
+  assert.equal(health.ready, true);
+
+  uninstallHost(home, "linux", {});
+  assert.equal(existsSync(paths.hostDirectory), false);
+  for (const manifestPath of paths.manifestPaths) assert.equal(existsSync(manifestPath), false);
+});
+
+test("windows paths use LOCALAPPDATA, a .bat launcher, and the Chrome registry key", () => {
+  const paths = hostPaths("C:\\Users\\test", "win32", { LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" });
+  assert.ok(paths.hostPath.endsWith("com.crawlio.browser_guide.bat"));
+  assert.ok(paths.hostDirectory.includes("Crawlio Browser Guide"));
+  assert.deepEqual(paths.registryKeys, ["HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.crawlio.browser_guide"]);
+  assert.equal(paths.manifestPaths.length, 1);
+});
+
 test("isMachO accepts real fat binaries and rejects scripts", darwinOnly, (t) => {
   const home = makeHome();
   t.after(() => rmSync(home, { recursive: true, force: true }));

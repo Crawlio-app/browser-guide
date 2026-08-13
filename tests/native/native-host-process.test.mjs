@@ -58,7 +58,7 @@ test("native host exchanges correlated little-endian framed messages without std
 });
 
 test("configured key travels only in framed stdin and is absent from outputs, argv, logs, and release assets", async (context) => {
-  if (!existsSync(debugHost)) {
+  if (!existsSync(host)) {
     context.skip("Run swift build --package-path native/macos first.");
     return;
   }
@@ -75,7 +75,7 @@ test("configured key travels only in framed stdin and is absent from outputs, ar
     { version: 1, requestId: "44444444-4444-4444-8444-444444444444", type: "HOST_FORGET_KEY" },
     { version: 1, requestId: "55555555-5555-4555-8555-555555555555", type: "HOST_HEALTH" },
   ];
-  const result = await exchange(requests, debugHost, {
+  const result = await exchange(requests, host, {
     ...process.env,
     BROWSER_GUIDE_TEST_IN_MEMORY_KEYCHAIN: "1",
   });
@@ -102,7 +102,7 @@ test("configured key travels only in framed stdin and is absent from outputs, ar
 });
 
 test("health completes while an earlier Realtime session request is still blocked", async (context) => {
-  if (!existsSync(debugHost)) {
+  if (!existsSync(host)) {
     context.skip("Run swift build --package-path native/macos first.");
     return;
   }
@@ -130,7 +130,7 @@ test("health completes while an earlier Realtime session request is still blocke
       },
       { version: 1, requestId: healthId, type: "HOST_HEALTH" },
     ],
-  ], 3, debugHost, {
+  ], 3, host, {
     ...process.env,
     BROWSER_GUIDE_TEST_IN_MEMORY_KEYCHAIN: "1",
     BROWSER_GUIDE_TEST_REALTIME_DELAY_MILLISECONDS: "750",
@@ -148,7 +148,7 @@ test("health completes while an earlier Realtime session request is still blocke
 });
 
 test("per-site memory persists, recalls, and clears through the real helper process", async (context) => {
-  if (!existsSync(debugHost)) {
+  if (!existsSync(host)) {
     context.skip("Run swift build --package-path native/macos first.");
     return;
   }
@@ -178,7 +178,7 @@ test("per-site memory persists, recalls, and clears through the real helper proc
       { version: 1, requestId: rejectId, type: "HOST_MEMORY_GET", payload: { origin: "chrome://settings" } },
       { version: 1, requestId: clearId, type: "HOST_MEMORY_CLEAR", payload: { origin } },
       { version: 1, requestId: emptyId, type: "HOST_MEMORY_GET", payload: { origin } },
-    ], debugHost, environment);
+    ], host, environment);
 
     assert.equal(stderr, "");
     assert.equal(messages.length, 5);
@@ -201,7 +201,7 @@ test("per-site memory persists, recalls, and clears through the real helper proc
 });
 
 test("agent-eyes evidence publishes to a private snapshot file and clears to absence", async (context) => {
-  if (!existsSync(debugHost)) {
+  if (!existsSync(host)) {
     context.skip("Run swift build --package-path native/macos first.");
     return;
   }
@@ -231,7 +231,7 @@ test("agent-eyes evidence publishes to a private snapshot file and clears to abs
         type: "HOST_PUBLISH_EVIDENCE",
         payload: { origin: "chrome://settings", title: "Nope", evidence: "{}" },
       },
-    ], debugHost, environment);
+    ], host, environment);
     assert.equal(first.stderr, "");
     assert.deepEqual(first.messages.find(({ requestId }) => requestId === publishId).data, { published: true });
     assert.equal(first.messages.find(({ requestId }) => requestId === rejectId).error.code, "INVALID_REQUEST");
@@ -245,7 +245,7 @@ test("agent-eyes evidence publishes to a private snapshot file and clears to abs
 
     const second = await exchange([
       { version: 1, requestId: clearId, type: "HOST_CLEAR_EVIDENCE" },
-    ], debugHost, environment);
+    ], host, environment);
     assert.deepEqual(second.messages.find(({ requestId }) => requestId === clearId).data, { cleared: true });
     assert.equal(existsSync(eyesPath), false, "clearing must delete the snapshot file");
   } finally {
