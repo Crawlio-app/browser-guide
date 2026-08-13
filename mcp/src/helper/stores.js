@@ -176,15 +176,21 @@ function readClaudeCodeKeychain() {
   } catch {
     return null;
   }
-  const services = new Set();
-  for (const match of dump.matchAll(/"svce"<blob>="(Claude Code-credentials[^"]*)"/g)) {
-    services.add(match[1]);
+  // Service names repeat across items (an old mcpOAuth-only item shares the
+  // base name with the real sign-in): enumerate (service, account) pairs.
+  const candidates = new Set();
+  for (const block of dump.split("keychain: ")) {
+    if (!block.includes("Claude Code-credentials")) continue;
+    const service = block.match(/"svce"<blob>="(Claude Code-credentials[^"]*)"/);
+    const account = block.match(/"acct"<blob>="([^"]*)"/);
+    if (service && account) candidates.add(JSON.stringify([service[1], account[1]]));
   }
   let freshest = null;
-  for (const service of services) {
+  for (const pair of candidates) {
+    const [service, account] = JSON.parse(pair);
     let payload;
     try {
-      payload = execFileSync("/usr/bin/security", ["find-generic-password", "-s", service, "-w"], {
+      payload = execFileSync("/usr/bin/security", ["find-generic-password", "-s", service, "-a", account, "-w"], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       }).trim();
