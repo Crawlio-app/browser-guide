@@ -2,6 +2,40 @@
 
 **Status: prototype built on the `spike/voice-fallback` branch, awaiting live measurement + merge decision. Nothing here ships on `main`.**
 
+## Live measurements (2026-08-13)
+
+The probe ran end to end on Apple silicon, minus the completion leg, which
+reached Anthropic authenticated and well-formed but was answered with a
+genuine `rate_limit_error` (the account's usage window was exhausted by a
+long coding session at the time; the call mechanics are proven).
+
+| Stage | Measured |
+|---|---|
+| Import Claude sign-in (Keychain via `security`, 4 items enumerated) | 350 ms |
+| Transcribe ~4 s utterance (SFSpeechRecognizer, on-device) | **289 ms** |
+| Transcript accuracy on the fixture question | exact match, word for word |
+| First spoken syllable (local system voice) | near-instant; full 16-word answer takes ~6 s to speak |
+| Claude completion (Messages API TTFT, not yet measured live) | typically 1-3 s |
+
+Projected loop: stop speaking → first spoken syllable in roughly **1.5-3.5 s**,
+dominated entirely by the completion leg. On-device STT is effectively free.
+
+Three fixes the live run forced, all committed:
+- `SFSpeechRecognizer` delivers result handlers on the main queue by default,
+  and the host's main thread blocks reading stdin frames; a dedicated
+  `OperationQueue` unblocks recognition.
+- Keychain reads moved to `/usr/bin/security`: item ACLs are evaluated against
+  the calling binary, and the ad-hoc-signed helper gets a new identity every
+  rebuild, which re-triggered the consent dialog each time. (Fix applies to the
+  product's claude-code import too; ported to main.)
+- Keychain items can share a service name (an old mcpOAuth-only item shadows
+  the real sign-in), so readers enumerate (service, account) pairs.
+
+One operational finding: Claude Code may hold a refreshed token in memory
+without immediately persisting it, so the stored token can sit expired while a
+long session runs. Any new `claude` invocation persists a fresh one, which is
+exactly the remedy the error message suggests.
+
 ## Prototype findings (2026-08-12)
 
 - The helper gained two spike-only messages — `HOST_TRANSCRIBE` (SFSpeechRecognizer, `requiresOnDeviceRecognition = true`) and `HOST_COMPLETE` (Anthropic Messages API with the imported Claude token via the Fase 1a `freshAnthropicAccessToken` re-sync) — unreachable from the extension; the model tool surface is unchanged.
