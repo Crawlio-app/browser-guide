@@ -156,7 +156,13 @@ public struct BrowserGuideHostService: Sendable {
                     requestID: request.requestID
                 )
             }
-            return ["text": try await anthropicClient.complete(prompt: prompt, accessToken: accessToken)]
+            do {
+                return ["text": try await anthropicClient.complete(prompt: prompt, accessToken: accessToken)]
+            } catch let error as RealtimeClientError {
+                // The transport errors are shared with the Realtime client, but
+                // this leg talks to Anthropic — say so.
+                throw mapAnthropicError(error, requestID: request.requestID)
+            }
 
         case .createSession(let sdp, let mode) where request.type == .createSession:
             guard let apiKey = try keyStore.readAPIKey() else {
@@ -191,6 +197,46 @@ public struct BrowserGuideHostService: Sendable {
                 message: "The native request payload does not match its type.",
                 retryable: false,
                 requestID: request.requestID
+            )
+        }
+    }
+
+    private func mapAnthropicError(_ error: RealtimeClientError, requestID: String) -> HostFailure {
+        switch error {
+        case .rateLimited:
+            return HostFailure(
+                code: .rateLimited,
+                message: "Anthropic is temporarily rate limited for your account. Try again in a moment.",
+                retryable: true,
+                requestID: requestID
+            )
+        case .unauthorized:
+            return HostFailure(
+                code: .notConfigured,
+                message: "Anthropic rejected your Claude sign-in. Open Claude Code once to refresh it, then try again.",
+                retryable: false,
+                requestID: requestID
+            )
+        case .timedOut, .networkFailure:
+            return HostFailure(
+                code: .upstreamError,
+                message: "Anthropic could not be reached.",
+                retryable: true,
+                requestID: requestID
+            )
+        case .upstreamFailure(let retryable):
+            return HostFailure(
+                code: .upstreamError,
+                message: "Anthropic rejected the completion request.",
+                retryable: retryable,
+                requestID: requestID
+            )
+        case .invalidResponse:
+            return HostFailure(
+                code: .upstreamError,
+                message: "Anthropic returned an invalid completion response.",
+                retryable: false,
+                requestID: requestID
             )
         }
     }

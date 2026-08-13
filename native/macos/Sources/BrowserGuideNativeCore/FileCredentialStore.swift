@@ -70,38 +70,34 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
     /// (`~/.claude/.credentials.json` is its Linux path) under services named
     /// "Claude Code-credentials" plus per-profile suffixed variants. Items may
     /// also hold only MCP-server tokens, so every candidate is parsed and the
-    /// sign-in with the latest expiry wins. Reading can trigger macOS's own
-    /// one-time consent prompt — exactly the user-visible boundary an import
-    /// should have.
+    /// sign-in with the latest expiry wins.
+    ///
+    /// Reads go through /usr/bin/security rather than SecItemCopyMatching: the
+    /// Keychain evaluates item access against the calling binary, and this
+    /// ad-hoc-signed helper gets a fresh identity on every rebuild, which
+    /// would re-trigger the consent dialog each time. The Apple-signed
+    /// security tool keeps one stable identity.
     static func readClaudeCodeKeychainItem() -> Data? {
-        // Phase 1: enumerate candidate services. macOS refuses to return item
-        // data on kSecMatchLimitAll queries, so this pass is attributes-only.
-        let listQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-        var listResult: CFTypeRef?
-        guard SecItemCopyMatching(listQuery as CFDictionary, &listResult) == errSecSuccess,
-              let items = listResult as? [[String: Any]] else { return nil }
-        let services = items
-            .compactMap { $0[kSecAttrService as String] as? String }
-            .filter { $0.hasPrefix("Claude Code-credentials") }
+        guard let dump = runSecurityTool(["dump-keychain"], timeoutSeconds: 10) else { return nil }
+        // Service names repeat across items (an old mcpOAuth-only item shares
+        // the base name with the real sign-in), so enumerate (service, account)
+        // pairs per item block; the account disambiguates duplicate services.
+        var candidates: Set<[String]> = []
+        for block in dump.components(separatedBy: "keychain: ") {
+            guard block.contains("Claude Code-credentials") else { continue }
+            guard let service = firstMatch(in: block, pattern: #""svce"<blob>="(Claude Code-credentials[^"]*)""#),
+                  let account = firstMatch(in: block, pattern: #""acct"<blob>="([^"]*)""#) else { continue }
+            candidates.insert([service, account])
+        }
 
-        // Phase 2: read each candidate individually and keep the freshest
-        // sign-in (profile items may hold only MCP-server tokens).
         var freshest: (expires: Double, payload: Data)?
-        for service in Set(services) {
-            let readQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecReturnData as String: true,
-                kSecMatchLimit as String: kSecMatchLimitOne,
-            ]
-            var readResult: CFTypeRef?
-            guard SecItemCopyMatching(readQuery as CFDictionary, &readResult) == errSecSuccess,
-                  let payload = readResult as? Data,
-                  let object = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any],
+        for pair in candidates {
+            guard let secret = runSecurityTool(
+                ["find-generic-password", "-s", pair[0], "-a", pair[1], "-w"],
+                timeoutSeconds: 10
+            ) else { continue }
+            let payload = Data(secret.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
+            guard let object = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any],
                   let oauth = object["claudeAiOauth"] as? [String: Any],
                   oauth["accessToken"] is String else { continue }
             let expires = (oauth["expiresAt"] as? NSNumber)?.doubleValue ?? 0
@@ -110,6 +106,49 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
             }
         }
         return freshest?.payload
+    }
+
+    private static func firstMatch(in text: String, pattern: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[range])
+    }
+
+    private static func runSecurityTool(_ arguments: [String], timeoutSeconds: TimeInterval) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = arguments
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        // Read concurrently with the wait: dump-keychain output can exceed the
+        // pipe buffer, and a full pipe would deadlock a plain waitUntilExit.
+        let collected = UnsafeBox()
+        let reader = Thread {
+            collected.data = output.fileHandleForReading.readDataToEndOfFile()
+        }
+        reader.start()
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            process.terminate()
+            return nil
+        }
+        while reader.isExecuting && Date() < deadline.addingTimeInterval(1) {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: collected.data, encoding: .utf8)
     }
 
     public static func defaultStoreURL() -> URL {
@@ -319,4 +358,10 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
             throw CredentialStoreError.ioFailure("The credential store could not be written.")
         }
     }
+}
+
+/// Mutable capture for the pipe-reader thread; access is sequenced by the
+/// thread lifecycle (started, then joined before the read).
+private final class UnsafeBox: @unchecked Sendable {
+    var data = Data()
 }

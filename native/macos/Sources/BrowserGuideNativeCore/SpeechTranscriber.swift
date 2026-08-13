@@ -24,6 +24,9 @@ public struct SpeechTranscriber: Sendable {
         guard recognizer.supportsOnDeviceRecognition else {
             throw SpeechTranscriberError.onDeviceUnavailable
         }
+        // Result handlers default to the main queue, but the host's main thread
+        // blocks reading stdin frames; deliver on a dedicated queue instead.
+        recognizer.queue = OperationQueue()
 
         let audioURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("browser-guide-transcribe-\(UUID().uuidString).wav")
