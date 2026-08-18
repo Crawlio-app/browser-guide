@@ -5,6 +5,7 @@ import {
   isHostBridgeRequest,
   isHostConfigureResponse,
   isHostCreateSessionResponse,
+  isHostCredentialSourcesResponse,
   isHostHealthResponse,
   isHostMemoryGetResponse,
   isNativeHostRequest,
@@ -119,6 +120,45 @@ describe("native messaging protocol", () => {
       data: { ready: true, configured: true, claude: "yes" },
     }, "HOST_HEALTH", requestId)).toBe(false);
     expect(isHostHealthResponse({ ok: true, health: { ready: true, configured: true, unexpected: 1 } })).toBe(false);
+  });
+
+  it("carries display identity without letting it become an injection channel", () => {
+    const health = (account: unknown) => isHostHealthResponse({
+      ok: true,
+      health: { ready: true, configured: true, claude: false, account },
+    });
+    expect(health({ provider: "codex", label: "person@example.test", plan: "plus" })).toBe(true);
+    expect(health({ provider: "claude-code", plan: "max", expiresAt: 1_800_000_000_000 })).toBe(true);
+    expect(health({ provider: "claude-code" })).toBe(true);
+    // Absent stays valid: a helper from before this field existed omits it.
+    expect(isHostHealthResponse({ ok: true, health: { ready: true, configured: true } })).toBe(true);
+
+    expect(health({ provider: "chatgpt" })).toBe(false);
+    expect(health({ label: "person@example.test" })).toBe(false);
+    expect(health({ provider: "codex", token: "sk-live" })).toBe(false);
+    expect(health({ provider: "codex", label: "line one\nline two" })).toBe(false);
+    expect(health({ provider: "codex", label: "x".repeat(400) })).toBe(false);
+    expect(health({ provider: "codex", expiresAt: -1 })).toBe(false);
+    expect(health({ provider: "codex", expiresAt: "soon" })).toBe(false);
+  });
+
+  it("bounds the credential-source answer the setup screen leads with", () => {
+    const sources = (value: unknown) => isHostCredentialSourcesResponse({ ok: true, sources: value });
+    expect(sources([])).toBe(true);
+    expect(sources([
+      { provider: "codex", available: true, label: "person@example.test", plan: "plus" },
+      { provider: "claude-code", available: false, detail: "Sign in to Claude Code to create one." },
+    ])).toBe(true);
+
+    expect(sources([{ provider: "codex" }])).toBe(false);
+    expect(sources([{ provider: "codex", available: "yes" }])).toBe(false);
+    expect(sources([{ provider: "codex", available: true, key: "sk-live" }])).toBe(false);
+    expect(sources("codex")).toBe(false);
+    expect(sources(Array.from({ length: 9 }, () => ({ provider: "codex", available: true })))).toBe(false);
+
+    // The request itself carries nothing, and a stray field must not pass.
+    expect(isNativeHostRequest({ version: 1, requestId, type: "HOST_CREDENTIAL_SOURCES" })).toBe(true);
+    expect(isNativeHostRequest({ version: 1, requestId, type: "HOST_CREDENTIAL_SOURCES", payload: {} })).toBe(false);
   });
 
   it("bounds the per-site memory messages to real web origins and sized text", () => {

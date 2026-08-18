@@ -13,6 +13,57 @@ public enum CredentialProvider: String, Sendable {
     case claudeCode = "claude-code"
 }
 
+/// Who a stored or importable sign-in belongs to. Display only: it never
+/// carries a token, and every field but the provider is optional because the
+/// harnesses record different things. Codex signs an id_token that names an
+/// email; Claude Code stores a subscription tier and an expiry and no address.
+public struct CredentialAccount: Equatable, Sendable {
+    public let provider: CredentialProvider
+    public let label: String?
+    public let plan: String?
+    public let expiresAt: Double?
+
+    public init(provider: CredentialProvider, label: String? = nil, plan: String? = nil, expiresAt: Double? = nil) {
+        self.provider = provider
+        self.label = label
+        self.plan = plan
+        self.expiresAt = expiresAt
+    }
+
+    public var json: [String: Any] {
+        var object: [String: Any] = ["provider": provider.rawValue]
+        if let label { object["label"] = label }
+        if let plan { object["plan"] = plan }
+        if let expiresAt { object["expiresAt"] = expiresAt }
+        return object
+    }
+}
+
+/// One place a sign-in could come from, and whether it is actually there.
+public struct CredentialSource: Equatable, Sendable {
+    public let provider: CredentialProvider
+    public let available: Bool
+    public let account: CredentialAccount?
+    /// Why it is unusable, when available is false.
+    public let detail: String?
+
+    public init(provider: CredentialProvider, available: Bool, account: CredentialAccount? = nil, detail: String? = nil) {
+        self.provider = provider
+        self.available = available
+        self.account = account
+        self.detail = detail
+    }
+
+    public var json: [String: Any] {
+        var object: [String: Any] = ["provider": provider.rawValue, "available": available]
+        if let label = account?.label { object["label"] = label }
+        if let plan = account?.plan { object["plan"] = plan }
+        if let expiresAt = account?.expiresAt { object["expiresAt"] = expiresAt }
+        if let detail { object["detail"] = detail }
+        return object
+    }
+}
+
 public struct CredentialImportOutcome: Equatable, Sendable {
     public let provider: CredentialProvider
     /// "api_key" when the import yielded a platform key usable by Realtime,
@@ -20,10 +71,26 @@ public struct CredentialImportOutcome: Equatable, Sendable {
     public let method: String
     /// Whether an OpenAI credential is configured after the import.
     public let configured: Bool
+    /// Who the imported sign-in belongs to, when the source says.
+    public let account: CredentialAccount?
+
+    public init(provider: CredentialProvider, method: String, configured: Bool, account: CredentialAccount? = nil) {
+        self.provider = provider
+        self.method = method
+        self.configured = configured
+        self.account = account
+    }
 }
 
 public protocol CredentialImporting: Sendable {
     func importCredentials(from provider: CredentialProvider) throws -> CredentialImportOutcome
+    /// Which harness sign-ins this computer actually has, so the setup screen
+    /// can lead with the one that is there instead of offering a menu of
+    /// everything it supports. Runs on demand rather than inside health:
+    /// finding a Claude Code sign-in means reading the login Keychain.
+    func availableSources() -> [CredentialSource]
+    /// Who the stored credentials belong to, for the "connected as" line.
+    func storedAccount() -> CredentialAccount?
     /// Re-reads the harness source that produced the stored OpenAI credential
     /// (currently Codex). Returns true when a different key was found.
     func resyncOpenAICredentialFromSource() -> Bool
@@ -224,12 +291,71 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
                 "Your Codex sign-in has no API key. Run `codex login` and choose the API-key option, or paste a key manually."
             )
         }
-        try upsert(provider: "openai", credential: [
+        let account = Self.codexAccount(from: object)
+        var credential: [String: Any] = [
             "type": "api_key",
             "key": apiKey,
             "source": "codex-cli",
-        ])
-        return CredentialImportOutcome(provider: .codex, method: "api_key", configured: true)
+        ]
+        if let label = account?.label { credential["label"] = label }
+        if let plan = account?.plan { credential["plan"] = plan }
+        try upsert(provider: "openai", credential: credential)
+        return CredentialImportOutcome(provider: .codex, method: "api_key", configured: true, account: account)
+    }
+
+    /// Codex writes the ChatGPT id_token beside the API key. Its payload names
+    /// the signed-in account, which is the only way we can confirm *which*
+    /// account was connected. The signature is not verified and never trusted
+    /// for authorization: this is a label on a file the user already owns, and
+    /// it is used for display only.
+    static func codexAccount(from authObject: [String: Any]) -> CredentialAccount? {
+        guard let tokens = authObject["tokens"] as? [String: Any],
+              let idToken = tokens["id_token"] as? String,
+              let claims = decodeJWTClaims(idToken) else {
+            return CredentialAccount(provider: .codex)
+        }
+        let email = (claims["email"] as? String) ?? (claims["preferred_username"] as? String)
+        let auth = claims["https://api.openai.com/auth"] as? [String: Any]
+        let plan = auth?["chatgpt_plan_type"] as? String
+        return CredentialAccount(
+            provider: .codex,
+            label: sanitizeIdentityText(email),
+            plan: sanitizeIdentityText(plan)
+        )
+    }
+
+    static func claudeAccount(from oauth: [String: Any]) -> CredentialAccount {
+        // The access token expires hourly and Claude Code refreshes it in the
+        // background, so surfacing that would cry wolf. The refresh token's
+        // expiry is the moment a person genuinely has to sign in again.
+        let expiry = (oauth["refreshTokenExpiresAt"] as? NSNumber)?.doubleValue
+        return CredentialAccount(
+            provider: .claudeCode,
+            plan: sanitizeIdentityText(oauth["subscriptionType"] as? String),
+            expiresAt: expiry.flatMap { $0 > 0 ? $0 : nil }
+        )
+    }
+
+    private static func decodeJWTClaims(_ token: String) -> [String: Any]? {
+        let segments = token.split(separator: ".")
+        guard segments.count >= 2 else { return nil }
+        var payload = String(segments[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while payload.count % 4 != 0 { payload.append("=") }
+        guard let data = Data(base64Encoded: payload),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        return object
+    }
+
+    /// The panel renders these as text, so anything that gets there has to be
+    /// bounded and free of control characters first.
+    private static func sanitizeIdentityText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 320,
+              trimmed.rangeOfCharacter(from: .controlCharacters) == nil else { return nil }
+        return trimmed
     }
 
     /// Claude Code stores `~/.claude/.credentials.json` with a `claudeAiOauth`
@@ -258,6 +384,7 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
                 "The Claude Code sign-in could not be read. Sign in to Claude Code again."
             )
         }
+        let account = Self.claudeAccount(from: oauth)
         var credential: [String: Any] = [
             "type": "oauth",
             "access": accessToken,
@@ -265,9 +392,85 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
         ]
         if let refreshToken = oauth["refreshToken"] as? String { credential["refresh"] = refreshToken }
         if let expiresAt = oauth["expiresAt"] as? NSNumber { credential["expires"] = expiresAt }
+        if let plan = account.plan { credential["plan"] = plan }
+        if let signInExpiry = account.expiresAt { credential["signInExpires"] = signInExpiry }
         try upsert(provider: "anthropic", credential: credential)
         let configured = (try? readAPIKey()) != nil
-        return CredentialImportOutcome(provider: .claudeCode, method: "oauth", configured: configured)
+        return CredentialImportOutcome(
+            provider: .claudeCode,
+            method: "oauth",
+            configured: configured,
+            account: account
+        )
+    }
+
+    // MARK: - Who is connected, and where a sign-in could come from
+
+    public func storedAccount() -> CredentialAccount? {
+        guard let store = try? loadStore() else { return nil }
+        if let openai = store["openai"] as? [String: Any], openai["key"] is String {
+            guard openai["source"] as? String == "codex-cli" else {
+                return CredentialAccount(provider: .codex, label: nil, plan: nil)
+            }
+            return CredentialAccount(
+                provider: .codex,
+                label: openai["label"] as? String,
+                plan: openai["plan"] as? String
+            )
+        }
+        guard let anthropic = store["anthropic"] as? [String: Any], anthropic["access"] is String else { return nil }
+        return CredentialAccount(
+            provider: .claudeCode,
+            plan: anthropic["plan"] as? String,
+            expiresAt: (anthropic["signInExpires"] as? NSNumber)?.doubleValue
+        )
+    }
+
+    public func availableSources() -> [CredentialSource] {
+        [codexSource(), claudeCodeSource()]
+    }
+
+    private func codexSource() -> CredentialSource {
+        let authURL = homeDirectory
+            .appendingPathComponent(".codex", isDirectory: true)
+            .appendingPathComponent("auth.json", isDirectory: false)
+        guard FileManager.default.fileExists(atPath: authURL.path) else {
+            return CredentialSource(provider: .codex, available: false, detail: "Run `codex login` to create one.")
+        }
+        guard let data = try? Data(contentsOf: authURL),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return CredentialSource(provider: .codex, available: false, detail: "The Codex sign-in file could not be read.")
+        }
+        guard let apiKey = object["OPENAI_API_KEY"] as? String,
+              !apiKey.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return CredentialSource(
+                provider: .codex,
+                available: false,
+                account: Self.codexAccount(from: object),
+                detail: "This Codex sign-in carries no API key."
+            )
+        }
+        return CredentialSource(provider: .codex, available: true, account: Self.codexAccount(from: object))
+    }
+
+    private func claudeCodeSource() -> CredentialSource {
+        let credentialsURL = homeDirectory
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent(".credentials.json", isDirectory: false)
+        var data: Data?
+        if FileManager.default.fileExists(atPath: credentialsURL.path) {
+            data = try? Data(contentsOf: credentialsURL)
+        }
+        if data == nil { data = claudeCodeKeychainData() }
+        guard let payload = data else {
+            return CredentialSource(provider: .claudeCode, available: false, detail: "Sign in to Claude Code to create one.")
+        }
+        guard let object = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any],
+              let oauth = object["claudeAiOauth"] as? [String: Any],
+              let accessToken = oauth["accessToken"] as? String, !accessToken.isEmpty else {
+            return CredentialSource(provider: .claudeCode, available: false, detail: "The Claude Code sign-in could not be read.")
+        }
+        return CredentialSource(provider: .claudeCode, available: true, account: Self.claudeAccount(from: oauth))
     }
 
     // MARK: - Source re-sync (freshness without our own OAuth refresh)

@@ -87,12 +87,17 @@ public struct BrowserGuideHostService: Sendable {
     private func execute(_ request: HostRequest) async throws -> [String: Any] {
         switch request.payload {
         case .none where request.type == .health:
-            return [
+            var health: [String: Any] = [
                 "ready": true,
                 "configured": try keyStore.readAPIKey() != nil,
                 "claude": importer?.hasAnthropicCredential() ?? false,
                 "model": BrowserGuideHostConstants.realtimeModel,
             ]
+            // Read from the store we already opened, never from the harness
+            // sources: health runs on every panel open and finding a Claude
+            // Code sign-in means shelling out to the login Keychain.
+            if let account = importer?.storedAccount() { health["account"] = account.json }
+            return health
 
         case .configureKey(let key) where request.type == .configureKey:
             try keyStore.saveAPIKey(key)
@@ -112,12 +117,25 @@ public struct BrowserGuideHostService: Sendable {
                 )
             }
             let outcome = try importer.importCredentials(from: provider)
-            return [
+            var result: [String: Any] = [
                 "imported": true,
                 "provider": outcome.provider.rawValue,
                 "method": outcome.method,
                 "configured": outcome.configured,
             ]
+            if let account = outcome.account { result["account"] = account.json }
+            return result
+
+        case .none where request.type == .credentialSources:
+            guard let importer else {
+                throw HostFailure(
+                    code: .secureStorageError,
+                    message: "Credential import is unavailable in this host build.",
+                    retryable: false,
+                    requestID: request.requestID
+                )
+            }
+            return ["sources": importer.availableSources().map(\.json)]
 
         case .memoryGet(let origin) where request.type == .memoryGet:
             let notes = (try? memory?.notes(for: origin)) ?? nil

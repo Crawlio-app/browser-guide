@@ -25,6 +25,7 @@ public enum HostRequestType: String, Sendable {
     case forgetKey = "HOST_FORGET_KEY"
     case createSession = "HOST_CREATE_SESSION"
     case importCredentials = "HOST_IMPORT_CREDENTIALS"
+    case credentialSources = "HOST_CREDENTIAL_SOURCES"
     case memoryGet = "HOST_MEMORY_GET"
     case memoryAppend = "HOST_MEMORY_APPEND"
     case memoryClear = "HOST_MEMORY_CLEAR"
@@ -135,7 +136,7 @@ public enum HostProtocolCodec {
         }
 
         switch type {
-        case .health, .forgetKey, .clearEvidence:
+        case .health, .forgetKey, .clearEvidence, .credentialSources:
             guard object["payload"] == nil else {
                 throw invalid("This native request must omit payload.", requestID: requestID)
             }

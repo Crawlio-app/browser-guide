@@ -6,6 +6,7 @@ import { sanitizePageContext } from "../../shared/sanitization.js";
 import {
   isHostConfigureResponse,
   isHostCreateSessionResponse,
+  isHostCredentialSourcesResponse,
   isHostForgetResponse,
   isHostHealthResponse,
   isHostImportResponse,
@@ -13,6 +14,8 @@ import {
   isHostMemoryGetResponse,
   isWebOrigin,
   type CredentialProvider,
+  type NativeAccountIdentity,
+  type NativeCredentialSource,
   type SiteMemoryNote,
 } from "../../shared/native-protocol.js";
 import {
@@ -31,7 +34,14 @@ import { DEMO_TOUR_GOAL, isPracticePage, resolveDemoStep } from "./demo-tour.js"
 import { MAX_RECORDING_MS, SessionBrokerError, VoiceSession, type GuideUiState, type RealtimeMode, type SessionBroker, type VoiceErrorKind } from "./voice-session.js";
 import { formatElapsed, startVoiceCapture, type VoiceCapture } from "./voice-capture.js";
 
-type SetupState = "booting" | "helper-missing" | "permission-needed" | "key-missing" | "demo" | "ready";
+/**
+ * "helper-missing" means Chrome has no manifest for the helper, so installing
+ * is the fix. "helper-unreachable" means it is installed and did not answer,
+ * so retrying is. They were one state until a storage error and a timeout both
+ * rendered "Connect a credential", which sends people to reconnect a sign-in
+ * that was never the problem.
+ */
+type SetupState = "booting" | "helper-missing" | "helper-unreachable" | "permission-needed" | "key-missing" | "demo" | "ready";
 type ToolbarState = "Ready" | "Guiding" | "Listening" | "Paused" | "Not shared" | "Demo" | "Unavailable";
 
 interface ConversationEntry {
@@ -114,6 +124,15 @@ function BrowserGuideApp(): React.ReactElement {
   const demoStateRef = useRef<{ stepIndex: number } | null>(null);
   const [keyPresent, setKeyPresent] = useState(false);
   const [keyBusy, setKeyBusy] = useState(false);
+  const [account, setAccount] = useState<NativeAccountIdentity | null>(null);
+  /** Null until asked, and after a helper too old to answer: both mean "show every option". */
+  const [sources, setSources] = useState<NativeCredentialSource[] | null>(null);
+  /**
+   * Bumped by sign-out. Anything that was already in flight compares the epoch
+   * it started with before writing state, so a late answer cannot revive a
+   * session the person just ended.
+   */
+  const authEpoch = useRef(0);
   const [lastGuidance, setLastGuidance] = useState<LastGuidance | null>(null);
   const [walkthrough, setWalkthrough] = useState<WalkthroughSession | null>(null);
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
@@ -289,6 +308,10 @@ function BrowserGuideApp(): React.ReactElement {
   }, []);
 
   const refreshHost = useCallback(async (showBoot = true) => {
+    // A sign-out that lands while this is in flight must win. Without the
+    // epoch, a health answer that was already on its way would put the panel
+    // back to ready seconds after the credential was removed.
+    const epoch = authEpoch.current;
     if (showBoot) setSetup("booting");
     setIssue(null);
     try {
@@ -297,30 +320,38 @@ function BrowserGuideApp(): React.ReactElement {
         8_000,
         "The local helper did not answer within eight seconds.",
       );
+      if (epoch !== authEpoch.current) return;
       if (!isHostHealthResponse(response) || !response.ok) {
         if (isHostHealthResponse(response) && !response.ok && response.code === "PERMISSION_REQUIRED") {
           setSetup("permission-needed");
           return;
         }
+        // Only the helper saying so counts as "no credential". A store it
+        // could not read, a timeout, or a dropped connection all mean the
+        // answer is unknown, and answering "unknown" with "connect a
+        // credential" is how a working sign-in gets thrown away.
         if (isHostHealthResponse(response) && !response.ok
-          && (response.code === "NOT_CONFIGURED" || response.code === "INVALID_API_KEY"
-            || response.code === "SECURE_STORAGE_ERROR")) {
+          && (response.code === "NOT_CONFIGURED" || response.code === "INVALID_API_KEY")) {
+          setAccount(null);
           setSetup("key-missing");
-          setIssue({
-            kind: "key",
-            message: response.code === "SECURE_STORAGE_ERROR"
-              ? "The local credential store is unavailable. Try again."
-              : response.error,
-          });
+          setIssue({ kind: "key", message: response.error });
           return;
         }
-        setSetup("helper-missing");
-        setIssue({ kind: "helper", message: hostError(response, "Open Browser Guide Helper once, then check again.") });
+        const notInstalled = isHostHealthResponse(response) && !response.ok && response.code === "HOST_NOT_FOUND";
+        setSetup(notInstalled ? "helper-missing" : "helper-unreachable");
+        setIssue({
+          kind: "helper",
+          message: hostError(response, notInstalled
+            ? "Open Browser Guide Helper once, then check again."
+            : "The local helper did not answer. Try again."),
+        });
         return;
       }
+      setAccount(response.health.account ?? null);
       setSetup(response.health.configured === true ? "ready" : "key-missing");
     } catch (error) {
-      setSetup("helper-missing");
+      if (epoch !== authEpoch.current) return;
+      setSetup("helper-unreachable");
       setIssue({ kind: "helper", message: errorMessage(error, "The local helper is unavailable.") });
     }
   }, []);
@@ -720,8 +751,37 @@ function BrowserGuideApp(): React.ReactElement {
     await refreshHost();
   }, [refreshHost]);
 
+  /**
+   * Which sign-ins this computer actually has. A helper installed before this
+   * request existed answers with an error, and that is not a failure: the
+   * setup screen simply falls back to offering every option it supports.
+   */
+  const loadCredentialSources = useCallback(async () => {
+    const epoch = authEpoch.current;
+    try {
+      const response = await withDeadline(
+        runtimeSend<unknown>({ type: "GUIDE_HOST_CREDENTIAL_SOURCES" }),
+        8_000,
+        "The helper did not answer in time.",
+      );
+      if (epoch !== authEpoch.current) return;
+      if (isHostCredentialSourcesResponse(response) && response.ok) setSources(response.sources);
+      else setSources(null);
+    } catch {
+      setSources(null);
+    }
+  }, []);
+
+  // Ask what is on this computer only when there is a sign-in to choose, so
+  // the Keychain read this costs on macOS never runs on a normal panel open.
+  useEffect(() => {
+    if (setup !== "key-missing" || sources !== null) return;
+    void loadCredentialSources();
+  }, [loadCredentialSources, setup, sources]);
+
   const importCredentials = useCallback(async (provider: CredentialProvider) => {
     if (keyBusy) return;
+    const epoch = authEpoch.current;
     setKeyBusy(true);
     setIssue(null);
     try {
@@ -730,9 +790,11 @@ function BrowserGuideApp(): React.ReactElement {
         10_000,
         "The sign-in import did not finish in time.",
       );
+      if (epoch !== authEpoch.current) return;
       if (!isHostImportResponse(response) || !response.ok) {
         throw new Error(hostError(response, "The sign-in could not be imported."));
       }
+      if (response.account) setAccount(response.account);
       if (response.configured) {
         setSetup("ready");
       } else {
@@ -742,6 +804,7 @@ function BrowserGuideApp(): React.ReactElement {
         });
       }
     } catch (error) {
+      if (epoch !== authEpoch.current) return;
       setIssue({ kind: "key", message: errorMessage(error, "The sign-in could not be imported.") });
     } finally {
       setKeyBusy(false);
@@ -757,6 +820,7 @@ function BrowserGuideApp(): React.ReactElement {
       return;
     }
     if (input) input.value = "";
+    const epoch = authEpoch.current;
     setKeyPresent(false);
     setKeyBusy(true);
     setIssue(null);
@@ -766,11 +830,14 @@ function BrowserGuideApp(): React.ReactElement {
         8_000,
         "Saving did not finish within eight seconds. Try again.",
       );
+      if (epoch !== authEpoch.current) return;
       if (!isHostConfigureResponse(response) || !response.ok) {
         throw new Error(hostError(response, "The key could not be saved."));
       }
+      setAccount(null);
       setSetup("ready");
     } catch (error) {
+      if (epoch !== authEpoch.current) return;
       setSetup("key-missing");
       setIssue({ kind: "key", message: errorMessage(error, "The key could not be saved.") });
     } finally {
@@ -1015,15 +1082,22 @@ function BrowserGuideApp(): React.ReactElement {
   }, [session]);
 
   const forgetKey = useCallback(async () => {
-    if (!window.confirm("Remove the stored OpenAI credential from this Mac?")) return;
+    if (!window.confirm(account?.label
+      ? `Disconnect ${account.label}? The credential is removed from this Mac. Your ${providerName(account.provider)} sign-in itself is untouched.`
+      : "Disconnect the stored credential from this Mac? The harness sign-in it came from is untouched.")) return;
+    // Bump first: from here on, any health or import answer still in flight
+    // belongs to the session that just ended and must not be applied.
+    authEpoch.current += 1;
     const response = await runtimeSend<unknown>({ type: "GUIDE_HOST_FORGET_KEY" });
     if (!isHostForgetResponse(response) || !response.ok) {
       setIssue({ kind: "key", message: hostError(response, "The credential could not be removed.") });
       return;
     }
     await clearConversation();
+    setAccount(null);
+    setSources(null);
     setSetup("key-missing");
-  }, [clearConversation]);
+  }, [account, clearConversation]);
 
   // Keep the newest exchange in view as answers stream in. With nothing to
   // follow there is nothing to scroll to, and scrolling anyway pushed the
@@ -1055,6 +1129,7 @@ function BrowserGuideApp(): React.ReactElement {
           issue={issue}
           keyBusy={keyBusy}
           keyPresent={keyPresent}
+          sources={sources}
           keyInput={transientKeyInput}
           onKeyPresent={setKeyPresent}
           onConfigureKey={configureApiKey}
@@ -1074,6 +1149,9 @@ function BrowserGuideApp(): React.ReactElement {
   const isRecording = voiceState === "listening";
   const inDemo = setup === "demo";
   const composerLocked = pagePaused || inDemo || demoActive;
+  // Warn while the sign-in still works. We cannot refresh it ourselves, so the
+  // only useful moment to say anything is before it stops.
+  const signInExpiry = expiryNotice(account);
   return (
     <main className="guide-shell" data-toolbar-state={toolbarState.toLowerCase().replace(" ", "-")}>
       <p className="sr-only" aria-live="polite" aria-atomic="true">{liveAnnouncement}</p>
@@ -1087,7 +1165,15 @@ function BrowserGuideApp(): React.ReactElement {
         <div className="instrument-actions">
           <button type="button" className="icon-button" onClick={() => void clearConversation()} aria-label="Clear session" title="Clear session"><ToolbarIcon kind="reset" /></button>
           <button type="button" className="icon-button" onClick={() => void clearSiteMemory()} aria-label="Clear site memory" title="Clear site memory"><ToolbarIcon kind="memory" /></button>
-          <button type="button" className="icon-button" onClick={() => void forgetKey()} aria-label="Forget API key" title="Forget API key"><ToolbarIcon kind="key" /></button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => void forgetKey()}
+            aria-label={account ? `Disconnect ${account.label ?? providerName(account.provider)}` : "Disconnect the stored credential"}
+            title={account
+              ? `Connected with ${providerName(account.provider)}${account.label ? ` as ${account.label}` : ""}${account.plan ? ` (${account.plan})` : ""}. Click to disconnect.`
+              : "Disconnect the stored credential"}
+          ><ToolbarIcon kind="key" /></button>
         </div>
       </header>
 
@@ -1100,6 +1186,11 @@ function BrowserGuideApp(): React.ReactElement {
               setSetup("booting");
               void refreshHost();
             }}>Finish setup</button>
+          </section>
+        )}
+        {signInExpiry && (
+          <section className="recovery-line" role="status">
+            <span>{signInExpiry}</span>
           </section>
         )}
         {pagePaused && (
@@ -1311,6 +1402,7 @@ interface SetupViewProps {
   issue: UiIssue | null;
   keyBusy: boolean;
   keyPresent: boolean;
+  sources: NativeCredentialSource[] | null;
   keyInput: React.RefObject<HTMLInputElement | null>;
   onKeyPresent(value: boolean): void;
   onConfigureKey(): Promise<void>;
@@ -1318,6 +1410,28 @@ interface SetupViewProps {
   onPermission(): Promise<void>;
   onRetry(showBoot?: boolean): Promise<void>;
   onDemo(): void;
+}
+
+const PROVIDER_NAMES: Record<CredentialProvider, string> = {
+  "codex": "Codex",
+  "claude-code": "Claude Code",
+};
+
+function providerName(provider: CredentialProvider): string {
+  return PROVIDER_NAMES[provider];
+}
+
+/** A sign-in is close enough to expiry to be worth mentioning: two weeks. */
+const EXPIRY_NOTICE_MS = 14 * 24 * 60 * 60 * 1_000;
+
+function expiryNotice(account: NativeAccountIdentity | null): string | null {
+  if (!account?.expiresAt) return null;
+  const remaining = account.expiresAt - Date.now();
+  if (remaining > EXPIRY_NOTICE_MS) return null;
+  const source = providerName(account.provider);
+  if (remaining <= 0) return `Your ${source} sign-in has expired. Open ${source} once to renew it, then reconnect here.`;
+  const days = Math.max(1, Math.round(remaining / (24 * 60 * 60 * 1_000)));
+  return `Your ${source} sign-in expires in ${days} ${days === 1 ? "day" : "days"}. Open ${source} once to renew it.`;
 }
 
 const INSTALL_COMMAND = "npx crawlio-browser-guide init";
@@ -1395,29 +1509,59 @@ function RecordingBar(props: {
   );
 }
 
-function SetupView(props: SetupViewProps): React.ReactElement {
-  const copy = setupCopy(props.state);
-  return (
-    <section className="setup-card" aria-labelledby="setup-title" aria-busy={props.state === "booting" || props.keyBusy}>
-      <CrawlioMark className="brand-mark setup-mark" />
-      <p className="setup-kicker">{copy.kicker}</p>
-      <h1 id="setup-title">{copy.title}</h1>
-      <p className="setup-line">{copy.line}</p>
+/**
+ * Sign-in leads with what this computer actually has. Both shipped assistants
+ * do the same thing in their own way: neither offers a menu of every provider
+ * it supports, and neither puts an API key beside the sign-in as an equal
+ * choice. When the helper cannot tell us what is present, every option comes
+ * back, because a wrong guess would hide the only route someone has.
+ */
+function SignInOptions(props: SetupViewProps): React.ReactElement {
+  const [keyOpen, setKeyOpen] = useState(false);
+  const known = props.sources !== null;
+  const buttons: Array<{ provider: CredentialProvider; label?: string }> = known
+    ? (props.sources ?? []).filter((source) => source.available)
+      .map((source) => ({ provider: source.provider, label: source.label }))
+    : [{ provider: "codex" }, { provider: "claude-code" }];
+  const missing = known ? (props.sources ?? []).filter((source) => !source.available) : [];
 
-      {props.state === "key-missing" ? (
-        <form className="key-form" onSubmit={(event) => {
-          event.preventDefault();
-          void props.onConfigureKey();
-        }}>
-          <div className="signin-options">
-            <button type="button" className="signin-button" disabled={props.keyBusy} onClick={() => void props.onImport("codex")}>
-              Use my Codex sign-in
+  return (
+    <form className="key-form" onSubmit={(event) => {
+      event.preventDefault();
+      void props.onConfigureKey();
+    }}>
+      {buttons.length > 0 && (
+        <div className="signin-options">
+          {buttons.map((source, index) => (
+            <button
+              key={source.provider}
+              type="button"
+              className={index === 0 ? "signin-button primary" : "signin-button"}
+              disabled={props.keyBusy}
+              onClick={() => void props.onImport(source.provider)}
+            >
+              <span>Continue with {providerName(source.provider)}</span>
+              {source.label ? <small>{source.label}</small> : null}
             </button>
-            <button type="button" className="signin-button" disabled={props.keyBusy} onClick={() => void props.onImport("claude-code")}>
-              Use my Claude Code sign-in
-            </button>
-          </div>
-          <p className="signin-divider"><span>or paste an API key</span></p>
+          ))}
+        </div>
+      )}
+
+      {known && buttons.length === 0 && (
+        <p className="signin-empty">
+          No harness sign-in was found on this computer. Sign in to Codex or Claude Code, then check again, or paste a key below.
+        </p>
+      )}
+      {missing.length > 0 && buttons.length > 0 && (
+        <ul className="signin-absent">
+          {missing.map((source) => (
+            <li key={source.provider}>{providerName(source.provider)}: {source.detail ?? "not found on this computer"}</li>
+          ))}
+        </ul>
+      )}
+
+      {keyOpen ? (
+        <>
           <label htmlFor="platform-key">OpenAI API key</label>
           <input
             id="platform-key"
@@ -1432,7 +1576,27 @@ function SetupView(props: SetupViewProps): React.ReactElement {
           <button className="setup-action" type="submit" disabled={!props.keyPresent || props.keyBusy}>
             {props.keyBusy ? "Saving…" : "Save key"}
           </button>
-        </form>
+        </>
+      ) : (
+        <button className="setup-secondary" type="button" onClick={() => setKeyOpen(true)}>
+          Paste an API key instead
+        </button>
+      )}
+    </form>
+  );
+}
+
+function SetupView(props: SetupViewProps): React.ReactElement {
+  const copy = setupCopy(props.state);
+  return (
+    <section className="setup-card" aria-labelledby="setup-title" aria-busy={props.state === "booting" || props.keyBusy}>
+      <CrawlioMark className="brand-mark setup-mark" />
+      <p className="setup-kicker">{copy.kicker}</p>
+      <h1 id="setup-title">{copy.title}</h1>
+      <p className="setup-line">{copy.line}</p>
+
+      {props.state === "key-missing" ? (
+        <SignInOptions {...props} />
       ) : props.state === "permission-needed" ? (
         <button className="setup-action" type="button" onClick={() => void props.onPermission()}>Allow helper</button>
       ) : props.state === "helper-missing" ? (
@@ -1440,6 +1604,11 @@ function SetupView(props: SetupViewProps): React.ReactElement {
           <InstallCommandRow />
           <button className="setup-action" type="button" onClick={() => void props.onRetry()}>Check again</button>
           <button className="setup-secondary" type="button" onClick={props.onDemo}>Try the demo first</button>
+        </>
+      ) : props.state === "helper-unreachable" ? (
+        <>
+          <button className="setup-action" type="button" onClick={() => void props.onRetry()}>Try again</button>
+          <button className="setup-secondary" type="button" onClick={props.onDemo}>Try the demo instead</button>
         </>
       ) : <span className="setup-loader" aria-hidden="true" />}
 
@@ -1515,8 +1684,9 @@ function setupCopy(state: SetupState): { kicker: string; title: string; line: st
   switch (state) {
     case "booting": return { kicker: "Local", title: "Checking setup", line: "Looking for the local helper on this computer.", privacy: "Nothing leaves Chrome yet." };
     case "helper-missing": return { kicker: "One-time setup", title: "Install the helper", line: "One command installs the local helper. Everything stays on this computer.", privacy: "Local to this computer." };
+    case "helper-unreachable": return { kicker: "Local", title: "The helper did not answer", line: "It is installed but did not respond. Nothing was lost, and your sign-in is untouched.", privacy: "Nothing left this computer." };
     case "permission-needed": return { kicker: "One-time setup", title: "Allow the helper", line: "Chrome needs permission to reach the local helper.", privacy: "This extension only." };
-    case "key-missing": return { kicker: "Final step", title: "Connect a credential", line: "Use an existing harness sign-in, or paste a key. Stored locally, never in Chrome.", privacy: "Saved to a private local file." };
+    case "key-missing": return { kicker: "Final step", title: "Connect your sign-in", line: "Browser Guide uses a sign-in you already have. It is stored locally, never in Chrome.", privacy: "Saved to a private local file." };
     case "demo":
     case "ready": return { kicker: "", title: "", line: "", privacy: "" };
   }

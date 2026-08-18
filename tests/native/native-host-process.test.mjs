@@ -34,19 +34,22 @@ test("native host exchanges correlated little-endian framed messages without std
   const health = messages.find(({ requestId }) => requestId === healthId);
   const invalidVersion = messages.find(({ requestId }) => requestId === invalidVersionId);
   assert.ok(health?.ok === true && health.data, `unexpected health response: ${JSON.stringify(health)}`);
-  assert.deepEqual(health, {
-    version: 1,
-    requestId: healthId,
-    ok: true,
-    data: {
-      ready: true,
-      configured: health.data.configured,
-      claude: health.data.claude,
-      model: "gpt-realtime",
-    },
-  });
+  assert.equal(health.version, 1);
+  assert.equal(health.requestId, healthId);
+  assert.equal(health.data.ready, true);
+  assert.equal(health.data.model, "gpt-realtime");
   assert.equal(typeof health.data.configured, "boolean");
   assert.equal(typeof health.data.claude, "boolean");
+  // `account` appears only when this computer has a stored credential, so the
+  // shape is checked when present rather than demanded.
+  assert.deepEqual(
+    Object.keys(health.data).sort().filter((key) => key !== "account"),
+    ["claude", "configured", "model", "ready"],
+  );
+  if (health.data.account !== undefined) {
+    assert.ok(["codex", "claude-code"].includes(health.data.account.provider));
+    assert.equal(JSON.stringify(health.data.account).includes("sk-"), false);
+  }
   assert.deepEqual(invalidVersion, {
     version: 1,
     requestId: invalidVersionId,
@@ -253,6 +256,42 @@ test("agent-eyes evidence publishes to a private snapshot file and clears to abs
   } finally {
     rmSync(eyesPath, { force: true });
   }
+});
+
+test("credential sources report what this computer has, never a token, in both hosts", async (context) => {
+  if (!existsSync(host)) {
+    context.skip("Run swift build --package-path native/macos first.");
+    return;
+  }
+
+  // A home with no harness sign-in at all: both sources must come back
+  // present-and-unavailable with a reason, not as an empty list, so the setup
+  // screen can say what it looked for.
+  const emptyHome = resolve(tmpdir(), `browser-guide-empty-home-${process.pid}-${Date.now()}`);
+  const sourcesId = "0ddddddd-dddd-4ddd-8ddd-ddddddddddd0";
+  const strayId = "0eeeeeee-eeee-4eee-8eee-eeeeeeeeeee0";
+  const { messages, stderr } = await exchange([
+    { version: 1, requestId: sourcesId, type: "HOST_CREDENTIAL_SOURCES" },
+    { version: 1, requestId: strayId, type: "HOST_CREDENTIAL_SOURCES", payload: {} },
+  ], host, {
+    ...process.env,
+    HOME: emptyHome,
+    BROWSER_GUIDE_CREDENTIALS_PATH: resolve(emptyHome, "credentials.json"),
+  });
+
+  assert.equal(stderr, "");
+  const answer = messages.find(({ requestId }) => requestId === sourcesId);
+  assert.ok(answer?.ok === true, `unexpected sources response: ${JSON.stringify(answer)}`);
+  assert.deepEqual(Object.keys(answer.data), ["sources"]);
+  assert.deepEqual(answer.data.sources.map((source) => source.provider).sort(), ["claude-code", "codex"]);
+  for (const source of answer.data.sources) {
+    assert.equal(typeof source.available, "boolean");
+    assert.equal(Object.hasOwn(source, "key") || Object.hasOwn(source, "access"), false);
+    if (!source.available) assert.equal(typeof source.detail, "string");
+  }
+
+  // Carrying a payload is a different request, and both hosts must reject it.
+  assert.equal(messages.find(({ requestId }) => requestId === strayId).error.code, "INVALID_REQUEST");
 });
 
 function exchange(requests, executable = host, environment = process.env) {

@@ -253,8 +253,14 @@ input:disabled {
 }
 
 .signin-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   width: 100%;
   min-height: 46px;
+  padding: 8px 14px;
   border: 1px solid var(--border-default);
   border-radius: 9999px;
   background: var(--bg-card);
@@ -265,29 +271,52 @@ input:disabled {
   transition: border-color 150ms ease, background 150ms ease;
 }
 
-.signin-button:not(:disabled):hover {
+/* One primary route, the way both shipped assistants do it: the sign-in this
+   computer already has carries the weight, everything else is an alternative. */
+.signin-button.primary {
+  min-height: 50px;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.signin-button.primary:not(:disabled):hover {
+  background: var(--accent-hover);
+}
+
+.signin-button small {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.72;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signin-button:not(.primary):not(:disabled):hover {
   border-color: var(--accent);
   background: var(--accent-tint);
 }
 
-.signin-divider {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 4px 0 0;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.signin-empty {
+  margin: 0;
+  color: var(--text-body);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
 }
 
-.signin-divider::before,
-.signin-divider::after {
-  content: "";
-  height: 1px;
-  flex: 1;
-  background: var(--border-subtle);
+.signin-absent {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 3px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-align: left;
 }
 
 .key-form label {

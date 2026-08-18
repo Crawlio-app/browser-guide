@@ -7,6 +7,7 @@ import {
   type HostClientErrorCode,
   type HostClientFailure,
   type NativeCreateSessionData,
+  type NativeCredentialSourcesData,
   type NativeImportData,
   type CredentialProvider,
   type NativeForgetData,
@@ -72,6 +73,7 @@ interface NativeDataByRequest {
   HOST_FORGET_KEY: NativeForgetData;
   HOST_CREATE_SESSION: NativeCreateSessionData;
   HOST_IMPORT_CREDENTIALS: NativeImportData;
+  HOST_CREDENTIAL_SOURCES: NativeCredentialSourcesData;
   HOST_MEMORY_GET: NativeMemoryGetData;
   HOST_MEMORY_APPEND: NativeMemoryAppendData;
   HOST_MEMORY_CLEAR: NativeMemoryClearData;
@@ -145,6 +147,11 @@ export class NativeHostClient {
     return this.runBounded(request, NATIVE_TIMEOUT_MS.importCredentials);
   }
 
+  credentialSources(): Promise<NativeCredentialSourcesData> {
+    const request = this.makeRequest("HOST_CREDENTIAL_SOURCES");
+    return this.runBounded(request, NATIVE_TIMEOUT_MS.importCredentials);
+  }
+
   memoryGet(origin: string): Promise<NativeMemoryGetData> {
     const request = this.makeRequest("HOST_MEMORY_GET", { origin });
     return this.runBounded(request, NATIVE_TIMEOUT_MS.memory);
@@ -196,6 +203,9 @@ export class NativeHostClient {
 
   private makeRequest(type: "HOST_HEALTH"): Extract<NativeHostRequest, { type: "HOST_HEALTH" }>;
   private makeRequest(type: "HOST_FORGET_KEY"): Extract<NativeHostRequest, { type: "HOST_FORGET_KEY" }>;
+  private makeRequest(
+    type: "HOST_CREDENTIAL_SOURCES",
+  ): Extract<NativeHostRequest, { type: "HOST_CREDENTIAL_SOURCES" }>;
   private makeRequest(
     type: "HOST_CONFIGURE_KEY",
     payload: { key: string },
@@ -251,6 +261,7 @@ export class NativeHostClient {
         request = { version: NATIVE_PROTOCOL_VERSION, requestId, type };
         break;
       case "HOST_FORGET_KEY":
+      case "HOST_CREDENTIAL_SOURCES":
         request = { version: NATIVE_PROTOCOL_VERSION, requestId, type };
         break;
       case "HOST_CONFIGURE_KEY":
@@ -592,11 +603,16 @@ function extractRequestId(value: unknown): string | null {
 }
 
 function unavailableHostError(description?: string): NativeHostClientError {
+  // Chrome says "not found" only when no manifest names this extension, which
+  // is the one case where installing is the remedy. Every other disconnect
+  // means the helper is registered and simply did not answer, and the two must
+  // stay distinguishable: the panel offers "install" for one and "try again"
+  // for the other.
   const missing = description?.toLowerCase().includes("not found")
     || description?.toLowerCase().includes("not registered")
     || description?.toLowerCase().includes("forbidden");
   return new NativeHostClientError(
-    "HOST_NOT_FOUND",
+    missing ? "HOST_NOT_FOUND" : "HOST_UNAVAILABLE",
     missing
       ? "The Browser Guide native host is not installed or is not allowed for this extension."
       : "The Browser Guide native host is unavailable.",

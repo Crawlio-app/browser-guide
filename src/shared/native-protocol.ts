@@ -10,6 +10,9 @@ export const NATIVE_MAX_RESPONSE_BYTES = 1_024 * 1_024;
 export const NATIVE_MAX_API_KEY_BYTES = 503;
 export const NATIVE_MAX_SDP_BYTES = 512 * 1_024;
 export const NATIVE_MAX_MODEL_BYTES = 120;
+export const NATIVE_MAX_ACCOUNT_LABEL_CHARS = 320;
+export const NATIVE_MAX_ACCOUNT_PLAN_CHARS = 60;
+export const NATIVE_MAX_CREDENTIAL_SOURCES = 8;
 export const NATIVE_MAX_ERROR_BYTES = 1_000;
 
 export const NATIVE_MAX_MEMORY_QUESTION_CHARS = 2_000;
@@ -44,6 +47,7 @@ export type NativeRequestType =
   | "HOST_FORGET_KEY"
   | "HOST_CREATE_SESSION"
   | "HOST_IMPORT_CREDENTIALS"
+  | "HOST_CREDENTIAL_SOURCES"
   | "HOST_MEMORY_GET"
   | "HOST_MEMORY_APPEND"
   | "HOST_MEMORY_CLEAR"
@@ -60,6 +64,7 @@ export type NativeHostRequest =
   | { version: 1; requestId: string; type: "HOST_FORGET_KEY" }
   | { version: 1; requestId: string; type: "HOST_CREATE_SESSION"; payload: { sdp: string; mode: RealtimeSessionMode } }
   | { version: 1; requestId: string; type: "HOST_IMPORT_CREDENTIALS"; payload: { provider: CredentialProvider } }
+  | { version: 1; requestId: string; type: "HOST_CREDENTIAL_SOURCES" }
   | { version: 1; requestId: string; type: "HOST_MEMORY_GET"; payload: { origin: string } }
   | { version: 1; requestId: string; type: "HOST_MEMORY_APPEND"; payload: { origin: string; question: string; answer: string } }
   | { version: 1; requestId: string; type: "HOST_MEMORY_CLEAR"; payload?: { origin: string } }
@@ -94,6 +99,37 @@ export interface CompletionMessage {
   content: CompletionRequestBlock[];
 }
 
+/**
+ * Who is connected, for display only. Never carries a token, and every field
+ * beyond the provider is optional because the harness sources differ in what
+ * they record: Codex signs an id_token that names an email, Claude Code stores
+ * a subscription tier and an expiry but no address.
+ */
+export interface NativeAccountIdentity {
+  provider: CredentialProvider;
+  /** Email or handle, when the source states one. */
+  label?: string;
+  /** Subscription or plan name, when the source states one. */
+  plan?: string;
+  /** Epoch ms after which this sign-in stops working, when the source states one. */
+  expiresAt?: number;
+}
+
+/**
+ * One place a sign-in could be imported from, and whether it is actually there.
+ * Detection runs on demand rather than inside health, because finding a Claude
+ * Code sign-in on macOS means reading the login Keychain.
+ */
+export interface NativeCredentialSource {
+  provider: CredentialProvider;
+  available: boolean;
+  label?: string;
+  plan?: string;
+  expiresAt?: number;
+  /** Why it is unusable, when available is false. */
+  detail?: string;
+}
+
 export interface NativeHealthData {
   ready: true;
   configured: boolean;
@@ -107,6 +143,7 @@ export interface NativeHealthData {
    */
   claude?: boolean;
   model?: string;
+  account?: NativeAccountIdentity;
 }
 
 export interface NativeConfigureData {
@@ -127,6 +164,11 @@ export interface NativeImportData {
   provider: CredentialProvider;
   method: "api_key" | "oauth";
   configured: boolean;
+  account?: NativeAccountIdentity;
+}
+
+export interface NativeCredentialSourcesData {
+  sources: NativeCredentialSource[];
 }
 
 export interface SiteMemoryNote {
@@ -170,6 +212,7 @@ export type NativeSuccessData =
   | NativeForgetData
   | NativeCreateSessionData
   | NativeImportData
+  | NativeCredentialSourcesData
   | NativeMemoryGetData
   | NativeMemoryAppendData
   | NativeMemoryClearData
@@ -208,6 +251,7 @@ export type HostBridgeRequest =
   | { type: "GUIDE_HOST_FORGET_KEY" }
   | { type: "GUIDE_HOST_CREATE_SESSION"; sdp: string; mode: RealtimeSessionMode }
   | { type: "GUIDE_HOST_IMPORT_CREDENTIALS"; provider: CredentialProvider }
+  | { type: "GUIDE_HOST_CREDENTIAL_SOURCES" }
   | { type: "GUIDE_HOST_MEMORY_GET"; origin: string }
   | { type: "GUIDE_HOST_MEMORY_APPEND"; origin: string; question: string; answer: string }
   | { type: "GUIDE_HOST_MEMORY_CLEAR"; origin?: string }
@@ -219,7 +263,15 @@ export type HostBridgeRequest =
 
 export type HostClientErrorCode = NativeHostErrorCode
   | "PERMISSION_REQUIRED"
+  /** Chrome has no manifest for the helper: it was never installed here. */
   | "HOST_NOT_FOUND"
+  /**
+   * The helper is registered but did not answer. Kept apart from
+   * HOST_NOT_FOUND because the remedies differ: one is "install it", the other
+   * is "try again", and telling someone to install software they already have
+   * is the surest way to lose them.
+   */
+  | "HOST_UNAVAILABLE"
   | "HOST_DISCONNECTED"
   | "TIMEOUT"
   | "INVALID_RESPONSE";
@@ -259,6 +311,12 @@ export interface HostImportResponse {
   provider: CredentialProvider;
   method: "api_key" | "oauth";
   configured: boolean;
+  account?: NativeAccountIdentity;
+}
+
+export interface HostCredentialSourcesResponse {
+  ok: true;
+  sources: NativeCredentialSource[];
 }
 
 export interface HostMemoryGetResponse {
@@ -307,6 +365,7 @@ export type HostClientResponse = HostClientFailure
   | HostForgetResponse
   | HostCreateSessionResponse
   | HostImportResponse
+  | HostCredentialSourcesResponse
   | HostMemoryGetResponse
   | HostMemoryAppendResponse
   | HostMemoryClearResponse
@@ -321,6 +380,7 @@ export function isHostBridgeRequest(value: unknown): value is HostBridgeRequest 
   switch (value.type) {
     case "GUIDE_HOST_HEALTH":
     case "GUIDE_HOST_FORGET_KEY":
+    case "GUIDE_HOST_CREDENTIAL_SOURCES":
     case "GUIDE_HOST_DISCONNECT":
       return hasExactKeys(value, ["type"]);
     case "GUIDE_HOST_CONFIGURE_KEY":
@@ -369,6 +429,7 @@ export function isNativeHostRequest(value: unknown): value is NativeHostRequest 
   switch (value.type) {
     case "HOST_HEALTH":
     case "HOST_FORGET_KEY":
+    case "HOST_CREDENTIAL_SOURCES":
       return hasExactKeys(value, ["version", "requestId", "type"]);
     case "HOST_CONFIGURE_KEY":
       return hasExactKeys(value, ["version", "requestId", "type", "payload"])
@@ -456,6 +517,8 @@ export function isNativeHostResponseFor(
       return isNativeCreateSessionData(value.data);
     case "HOST_IMPORT_CREDENTIALS":
       return isNativeImportData(value.data);
+    case "HOST_CREDENTIAL_SOURCES":
+      return isNativeCredentialSourcesData(value.data);
     case "HOST_MEMORY_GET":
       return isNativeMemoryGetData(value.data);
     case "HOST_MEMORY_APPEND":
@@ -524,8 +587,54 @@ export function isNativeHealthData(value: unknown): value is NativeHealthData {
     && value.ready === true
     && typeof value.configured === "boolean"
     && (value.claude === undefined || typeof value.claude === "boolean")
-    && hasExactKeys(value, ["ready", "configured"], ["claude", "model"])
-    && (value.model === undefined || isBoundedString(value.model, 1, NATIVE_MAX_MODEL_BYTES));
+    && hasExactKeys(value, ["ready", "configured"], ["claude", "model", "account"])
+    && (value.model === undefined || isBoundedString(value.model, 1, NATIVE_MAX_MODEL_BYTES))
+    && (value.account === undefined || isNativeAccountIdentity(value.account));
+}
+
+/**
+ * Display identity only. A label that fails validation is rejected rather than
+ * trimmed: the panel renders it as text, so anything that reaches it must have
+ * passed a length bound and a control-character check first.
+ */
+export function isNativeAccountIdentity(value: unknown): value is NativeAccountIdentity {
+  return isRecord(value)
+    && hasExactKeys(value, ["provider"], ["label", "plan", "expiresAt"])
+    && isCredentialProvider(value.provider)
+    && (value.label === undefined || isAccountText(value.label, NATIVE_MAX_ACCOUNT_LABEL_CHARS))
+    && (value.plan === undefined || isAccountText(value.plan, NATIVE_MAX_ACCOUNT_PLAN_CHARS))
+    && (value.expiresAt === undefined || isEpochMs(value.expiresAt));
+}
+
+export function isNativeCredentialSource(value: unknown): value is NativeCredentialSource {
+  return isRecord(value)
+    && hasExactKeys(value, ["provider", "available"], ["label", "plan", "expiresAt", "detail"])
+    && isCredentialProvider(value.provider)
+    && typeof value.available === "boolean"
+    && (value.label === undefined || isAccountText(value.label, NATIVE_MAX_ACCOUNT_LABEL_CHARS))
+    && (value.plan === undefined || isAccountText(value.plan, NATIVE_MAX_ACCOUNT_PLAN_CHARS))
+    && (value.expiresAt === undefined || isEpochMs(value.expiresAt))
+    && (value.detail === undefined || isAccountText(value.detail, NATIVE_MAX_ERROR_BYTES));
+}
+
+export function isNativeCredentialSourcesData(value: unknown): value is NativeCredentialSourcesData {
+  return isRecord(value)
+    && hasExactKeys(value, ["sources"])
+    && Array.isArray(value.sources)
+    && value.sources.length <= NATIVE_MAX_CREDENTIAL_SOURCES
+    && value.sources.every(isNativeCredentialSource);
+}
+
+/**
+ * Text safe to render in the panel: bounded, and free of control
+ * characters so a crafted label cannot smuggle line breaks into the UI.
+ */
+function isAccountText(value: unknown, max: number): value is string {
+  return isBoundedString(value, 1, max) && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function isEpochMs(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 export function isNativeConfigureData(value: unknown): value is NativeConfigureData {
@@ -545,11 +654,12 @@ export function isNativeCreateSessionData(value: unknown): value is NativeCreate
 
 export function isNativeImportData(value: unknown): value is NativeImportData {
   return isRecord(value)
-    && hasExactKeys(value, ["imported", "provider", "method", "configured"])
+    && hasExactKeys(value, ["imported", "provider", "method", "configured"], ["account"])
     && value.imported === true
     && isCredentialProvider(value.provider)
     && (value.method === "api_key" || value.method === "oauth")
-    && typeof value.configured === "boolean";
+    && typeof value.configured === "boolean"
+    && (value.account === undefined || isNativeAccountIdentity(value.account));
 }
 
 export function isCredentialProvider(value: unknown): value is CredentialProvider {
@@ -559,11 +669,21 @@ export function isCredentialProvider(value: unknown): value is CredentialProvide
 export function isHostImportResponse(value: unknown): value is HostImportResponse | HostClientFailure {
   return isHostClientFailure(value) || (isRecord(value)
     && value.ok === true
-    && hasExactKeys(value, ["ok", "imported", "provider", "method", "configured"])
+    && hasExactKeys(value, ["ok", "imported", "provider", "method", "configured"], ["account"])
     && value.imported === true
     && isCredentialProvider(value.provider)
     && (value.method === "api_key" || value.method === "oauth")
-    && typeof value.configured === "boolean");
+    && typeof value.configured === "boolean"
+    && (value.account === undefined || isNativeAccountIdentity(value.account)));
+}
+
+export function isHostCredentialSourcesResponse(
+  value: unknown,
+): value is HostCredentialSourcesResponse | HostClientFailure {
+  return isHostClientFailure(value) || (isRecord(value)
+    && value.ok === true
+    && hasExactKeys(value, ["ok", "sources"])
+    && isNativeCredentialSourcesData({ sources: value.sources }));
 }
 
 export function isNativeMemoryGetData(value: unknown): value is NativeMemoryGetData {
@@ -767,6 +887,7 @@ function isHostClientErrorCode(value: unknown): value is HostClientErrorCode {
   return isNativeHostErrorCode(value)
     || value === "PERMISSION_REQUIRED"
     || value === "HOST_NOT_FOUND"
+    || value === "HOST_UNAVAILABLE"
     || value === "HOST_DISCONNECTED"
     || value === "TIMEOUT"
     || value === "INVALID_RESPONSE";

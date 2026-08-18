@@ -98,7 +98,8 @@ export function decodeRequest(data) {
   const type = object.type;
   const knownTypes = [
     "HOST_HEALTH", "HOST_CONFIGURE_KEY", "HOST_FORGET_KEY", "HOST_CREATE_SESSION",
-    "HOST_IMPORT_CREDENTIALS", "HOST_MEMORY_GET", "HOST_MEMORY_APPEND", "HOST_MEMORY_CLEAR",
+    "HOST_IMPORT_CREDENTIALS", "HOST_CREDENTIAL_SOURCES",
+    "HOST_MEMORY_GET", "HOST_MEMORY_APPEND", "HOST_MEMORY_CLEAR",
     "HOST_PUBLISH_EVIDENCE", "HOST_CLEAR_EVIDENCE", "HOST_TRANSCRIBE", "HOST_COMPLETE",
   ];
   if (typeof type !== "string" || !knownTypes.includes(type)) {
@@ -108,6 +109,7 @@ export function decodeRequest(data) {
   switch (type) {
     case "HOST_HEALTH":
     case "HOST_FORGET_KEY":
+    case "HOST_CREDENTIAL_SOURCES":
     case "HOST_CLEAR_EVIDENCE": {
       if (object.payload !== undefined) {
         throw invalid("This native request must omit payload.", requestId);

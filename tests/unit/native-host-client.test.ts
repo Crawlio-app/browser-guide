@@ -114,8 +114,27 @@ describe("NativeHostClient", () => {
 
     const error = await failure;
     expect(error).toBeInstanceOf(NativeHostClientError);
-    expect((error as NativeHostClientError).code).toBe("HOST_NOT_FOUND");
+    // A disconnect Chrome does not explain means the helper is installed and
+    // did not answer. Only "not found" means it was never installed, and the
+    // panel offers a different remedy for each.
+    expect((error as NativeHostClientError).code).toBe("HOST_UNAVAILABLE");
     expect(harness.connectNative).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps an uninstalled helper distinguishable from one that did not answer", async () => {
+    const missing = createHarness();
+    const missingFailure = missing.client.health().catch((error: unknown) => error);
+    await vi.waitFor(() => expect(missing.ports[0]?.messages).toHaveLength(1));
+    missing.lastError = "Specified native messaging host not found.";
+    missing.ports[0]?.remoteDisconnect();
+    expect(((await missingFailure) as NativeHostClientError).code).toBe("HOST_NOT_FOUND");
+
+    const silent = createHarness();
+    const silentFailure = silent.client.health().catch((error: unknown) => error);
+    await vi.waitFor(() => expect(silent.ports[0]?.messages).toHaveLength(1));
+    silent.lastError = "Native host has exited.";
+    silent.ports[0]?.remoteDisconnect();
+    expect(((await silentFailure) as NativeHostClientError).code).toBe("HOST_UNAVAILABLE");
   });
 
   it("enforces the exact eight-second configure timeout and closes the stale port", async () => {

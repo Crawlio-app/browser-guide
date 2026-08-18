@@ -31,6 +31,72 @@ function writePrivateJson(path, object) {
 /** Five minutes, matching the early-expiry buffer the Swift store uses. */
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1_000;
 
+/** The panel renders these as text, so bound them and reject control
+ *  characters before they can smuggle line breaks into the UI. */
+function identityText(value) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 320) return undefined;
+  return /[\u0000-\u001f\u007f]/.test(trimmed) ? undefined : trimmed;
+}
+
+function trimAccount(account) {
+  const result = { provider: account.provider };
+  const label = identityText(account.label);
+  const plan = identityText(account.plan);
+  if (label) result.label = label;
+  if (plan) result.plan = plan;
+  if (typeof account.expiresAt === "number" && account.expiresAt > 0) result.expiresAt = account.expiresAt;
+  return result;
+}
+
+function sourceFrom(account, available, detail) {
+  const source = { provider: account.provider, available };
+  if (account.label) source.label = account.label;
+  if (account.plan) source.plan = account.plan;
+  if (account.expiresAt) source.expiresAt = account.expiresAt;
+  if (detail) source.detail = detail;
+  return source;
+}
+
+/** Codex writes the ChatGPT id_token beside the API key. Its payload names the
+ *  signed-in account, which is the only way to confirm which account was
+ *  connected. The signature is not verified and never trusted for
+ *  authorization: this is a label on a file the user already owns. */
+function codexAccount(authObject) {
+  const idToken = authObject?.tokens?.id_token;
+  const claims = typeof idToken === "string" ? decodeJwtClaims(idToken) : null;
+  if (!claims) return { provider: "codex" };
+  return trimAccount({
+    provider: "codex",
+    label: claims.email ?? claims.preferred_username,
+    plan: claims["https://api.openai.com/auth"]?.chatgpt_plan_type,
+  });
+}
+
+/** The access token expires hourly and Claude Code refreshes it in the
+ *  background, so surfacing that would cry wolf. The refresh token's expiry is
+ *  the moment a person genuinely has to sign in again. */
+function claudeAccount(oauth) {
+  return trimAccount({
+    provider: "claude-code",
+    plan: oauth?.subscriptionType,
+    expiresAt: oauth?.refreshTokenExpiresAt,
+  });
+}
+
+function decodeJwtClaims(token) {
+  const segments = token.split(".");
+  if (segments.length < 2) return null;
+  try {
+    const payload = Buffer.from(segments[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const claims = JSON.parse(payload);
+    return typeof claims === "object" && claims !== null && !Array.isArray(claims) ? claims : null;
+  } catch {
+    return null;
+  }
+}
+
 export class FileCredentialStore {
   constructor(storeUrl = configPath("BROWSER_GUIDE_CREDENTIALS_PATH", "credentials.json"), homeDirectory = homedir()) {
     this.storeUrl = storeUrl;
@@ -109,8 +175,12 @@ export class FileCredentialStore {
     if (typeof apiKey !== "string" || apiKey.trim().length === 0) {
       throw new CredentialStoreError("importSourceInvalid", "Your Codex sign-in has no API key. Run `codex login` and choose the API-key option, or paste a key manually.");
     }
-    this.#upsert("openai", { type: "api_key", key: apiKey, source: "codex-cli" });
-    return { provider: "codex", method: "api_key", configured: true };
+    const account = codexAccount(object);
+    const credential = { type: "api_key", key: apiKey, source: "codex-cli" };
+    if (account.label) credential.label = account.label;
+    if (account.plan) credential.plan = account.plan;
+    this.#upsert("openai", credential);
+    return { provider: "codex", method: "api_key", configured: true, account };
   }
 
   #importClaudeCode() {
@@ -136,11 +206,85 @@ export class FileCredentialStore {
     if (typeof oauth?.accessToken !== "string" || oauth.accessToken.length === 0) {
       throw new CredentialStoreError("importSourceInvalid", "The Claude Code sign-in could not be read. Sign in to Claude Code again.");
     }
+    const account = claudeAccount(oauth);
     const credential = { type: "oauth", access: oauth.accessToken, source: "claude-code" };
     if (typeof oauth.refreshToken === "string") credential.refresh = oauth.refreshToken;
     if (typeof oauth.expiresAt === "number") credential.expires = oauth.expiresAt;
+    if (account.plan) credential.plan = account.plan;
+    if (account.expiresAt) credential.signInExpires = account.expiresAt;
     this.#upsert("anthropic", credential);
-    return { provider: "claude-code", method: "oauth", configured: this.readApiKey() !== null };
+    return { provider: "claude-code", method: "oauth", configured: this.readApiKey() !== null, account };
+  }
+
+  /** Who the stored credentials belong to, read from the store we already own
+   *  so health never has to touch the harness sources. */
+  storedAccount() {
+    let store;
+    try {
+      store = this.#load();
+    } catch {
+      return null;
+    }
+    if (!store) return null;
+    const openai = store.openai;
+    if (openai && typeof openai.key === "string") {
+      if (openai.source !== "codex-cli") return { provider: "codex" };
+      return trimAccount({ provider: "codex", label: openai.label, plan: openai.plan });
+    }
+    const anthropic = store.anthropic;
+    if (!anthropic || typeof anthropic.access !== "string") return null;
+    return trimAccount({ provider: "claude-code", plan: anthropic.plan, expiresAt: anthropic.signInExpires });
+  }
+
+  /** Which harness sign-ins this computer actually has, so the setup screen can
+   *  lead with the one that is there. */
+  availableSources() {
+    return [this.#codexSource(), this.#claudeCodeSource()];
+  }
+
+  #codexSource() {
+    const authPath = join(this.homeDirectory, ".codex", "auth.json");
+    if (!existsSync(authPath)) {
+      return { provider: "codex", available: false, detail: "Run `codex login` to create one." };
+    }
+    let object;
+    try {
+      object = JSON.parse(readFileSync(authPath, "utf8"));
+    } catch {
+      return { provider: "codex", available: false, detail: "The Codex sign-in file could not be read." };
+    }
+    const account = codexAccount(object);
+    const apiKey = object?.OPENAI_API_KEY;
+    if (typeof apiKey !== "string" || apiKey.trim().length === 0) {
+      return sourceFrom(account, false, "This Codex sign-in carries no API key.");
+    }
+    return sourceFrom(account, true);
+  }
+
+  #claudeCodeSource() {
+    const credentialsPath = join(this.homeDirectory, ".claude", ".credentials.json");
+    let data = null;
+    if (existsSync(credentialsPath)) {
+      try {
+        data = readFileSync(credentialsPath, "utf8");
+      } catch {
+        data = null;
+      }
+    }
+    if (data === null) data = readClaudeCodeKeychain();
+    if (data === null) {
+      return { provider: "claude-code", available: false, detail: "Sign in to Claude Code to create one." };
+    }
+    let oauth;
+    try {
+      oauth = JSON.parse(data)?.claudeAiOauth;
+    } catch {
+      oauth = null;
+    }
+    if (typeof oauth?.accessToken !== "string" || oauth.accessToken.length === 0) {
+      return { provider: "claude-code", available: false, detail: "The Claude Code sign-in could not be read." };
+    }
+    return sourceFrom(claudeAccount(oauth), true);
   }
 
   hasAnthropicCredential() {

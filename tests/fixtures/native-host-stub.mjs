@@ -47,10 +47,29 @@ function respond(request) {
       };
       if (process.env.BROWSER_GUIDE_TEST_LEGACY_HEALTH !== "1") {
         health.claude = process.env.BROWSER_GUIDE_TEST_CLAUDE === "1";
+        if (health.configured) health.account = { provider: "codex", label: "tester@example.test", plan: "plus" };
+        else if (health.claude) health.account = { provider: "claude-code", plan: "max" };
       }
       write({ ...base, data: health });
       break;
     }
+    case "HOST_CREDENTIAL_SOURCES":
+      // A helper that predates this request answers INVALID_REQUEST, which the
+      // panel has to survive; BROWSER_GUIDE_TEST_LEGACY_HEALTH reproduces it.
+      if (process.env.BROWSER_GUIDE_TEST_LEGACY_HEALTH === "1") {
+        write({
+          version: 1,
+          requestId: request.requestId,
+          ok: false,
+          error: { code: "INVALID_REQUEST", message: "The native request type is unsupported.", retryable: false },
+        });
+        break;
+      }
+      write({ ...base, data: { sources: [
+        { provider: "codex", available: true, label: "tester@example.test", plan: "plus" },
+        { provider: "claude-code", available: false, detail: "Sign in to Claude Code to create one." },
+      ] } });
+      break;
     case "HOST_CREATE_SESSION":
       write({ ...base, data: { answerSdp: "v=0\r\ns=browser-guide-controlled-answer\r\n", upstreamRequestId: "req_e2e" } });
       break;

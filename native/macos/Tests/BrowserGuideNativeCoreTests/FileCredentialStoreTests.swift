@@ -60,6 +60,93 @@ final class FileCredentialStoreTests: XCTestCase {
         XCTAssertEqual(try store.readAPIKey(), "sk-" + String(repeating: "d", count: 24))
     }
 
+    func testNamesTheCodexAccountFromItsSignedIdentityToken() throws {
+        let codexDirectory = temporaryRoot.appendingPathComponent(".codex", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexDirectory, withIntermediateDirectories: true)
+        let claims: [String: Any] = [
+            "email": "person@example.test",
+            "https://api.openai.com/auth": ["chatgpt_plan_type": "plus"],
+        ]
+        let auth: [String: Any] = [
+            "OPENAI_API_KEY": "sk-" + String(repeating: "d", count: 24),
+            "tokens": ["id_token": Self.unsignedJWT(claims: claims), "access_token": "opaque"],
+        ]
+        try JSONSerialization.data(withJSONObject: auth)
+            .write(to: codexDirectory.appendingPathComponent("auth.json"))
+
+        let store = makeStore()
+        let outcome = try store.importCredentials(from: .codex)
+        XCTAssertEqual(outcome.account?.label, "person@example.test")
+        XCTAssertEqual(outcome.account?.plan, "plus")
+
+        // Health reads the identity back from our own store, so it never has
+        // to reopen the harness source.
+        let stored = store.storedAccount()
+        XCTAssertEqual(stored?.provider, .codex)
+        XCTAssertEqual(stored?.label, "person@example.test")
+
+        // The token itself is never carried into the identity.
+        XCTAssertFalse(outcome.account?.json.description.contains("sk-") ?? true)
+    }
+
+    func testClaudeAccountReportsThePlanAndTheDateReAuthIsActuallyNeeded() throws {
+        let claudeDirectory = temporaryRoot.appendingPathComponent(".claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: claudeDirectory, withIntermediateDirectories: true)
+        let hourFromNow = Date().addingTimeInterval(3_600).timeIntervalSince1970 * 1_000
+        let yearFromNow = Date().addingTimeInterval(365 * 86_400).timeIntervalSince1970 * 1_000
+        let payload: [String: Any] = ["claudeAiOauth": [
+            "accessToken": "sk-ant-oat-token",
+            "refreshToken": "sk-ant-ort-token",
+            "subscriptionType": "max",
+            // The access token turns over hourly and Claude Code refreshes it,
+            // so the identity must quote the refresh expiry, not this one.
+            "expiresAt": hourFromNow,
+            "refreshTokenExpiresAt": yearFromNow,
+        ]]
+        try JSONSerialization.data(withJSONObject: payload)
+            .write(to: claudeDirectory.appendingPathComponent(".credentials.json"))
+
+        let store = makeStore()
+        let outcome = try store.importCredentials(from: .claudeCode)
+        XCTAssertEqual(outcome.account?.plan, "max")
+        XCTAssertEqual(outcome.account?.expiresAt, yearFromNow)
+        XCTAssertEqual(store.storedAccount()?.expiresAt, yearFromNow)
+    }
+
+    func testAvailableSourcesReportWhatThisComputerActuallyHas() throws {
+        let store = makeStore()
+        let empty = store.availableSources()
+        XCTAssertEqual(empty.count, 2)
+        XCTAssertTrue(empty.allSatisfy { !$0.available })
+        XCTAssertNotNil(empty.first { $0.provider == .codex }?.detail)
+
+        let codexDirectory = temporaryRoot.appendingPathComponent(".codex", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexDirectory, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["OPENAI_API_KEY": "sk-" + String(repeating: "e", count: 24)])
+            .write(to: codexDirectory.appendingPathComponent("auth.json"))
+
+        let found = store.availableSources()
+        XCTAssertEqual(found.first { $0.provider == .codex }?.available, true)
+        XCTAssertEqual(found.first { $0.provider == .claudeCode }?.available, false)
+
+        // A sign-in that exists but carries no usable key is reported as
+        // present-and-unusable, with the reason, rather than silently absent.
+        try JSONSerialization.data(withJSONObject: ["tokens": ["access_token": "only"]])
+            .write(to: codexDirectory.appendingPathComponent("auth.json"))
+        let unusable = store.availableSources().first { $0.provider == .codex }
+        XCTAssertEqual(unusable?.available, false)
+        XCTAssertEqual(unusable?.detail, "This Codex sign-in carries no API key.")
+    }
+
+    private static func unsignedJWT(claims: [String: Any]) -> String {
+        let payload = try! JSONSerialization.data(withJSONObject: claims)
+            .base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "header.\(payload).signature"
+    }
+
     func testCodexImportWithoutKeyExplainsTheFix() throws {
         let codexDirectory = temporaryRoot.appendingPathComponent(".codex", isDirectory: true)
         try FileManager.default.createDirectory(at: codexDirectory, withIntermediateDirectories: true)

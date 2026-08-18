@@ -30,13 +30,20 @@ export class HostService {
 
   async #execute(request) {
     switch (request.type) {
-      case "HOST_HEALTH":
-        return {
+      case "HOST_HEALTH": {
+        const health = {
           ready: true,
           configured: this.keyStore.readApiKey() !== null,
           claude: this.importer?.hasAnthropicCredential() === true,
           model: REALTIME_MODEL,
         };
+        // From the store we already own, never from the harness sources:
+        // health runs on every panel open and finding a Claude Code sign-in
+        // means shelling out to the login Keychain.
+        const account = this.importer?.storedAccount?.() ?? null;
+        if (account) health.account = account;
+        return health;
+      }
 
       case "HOST_CONFIGURE_KEY":
         this.keyStore.saveApiKey(request.payload.key);
@@ -51,7 +58,21 @@ export class HostService {
           throw new HostFailure("SECURE_STORAGE_ERROR", "Credential import is unavailable in this host build.", false, request.requestId);
         }
         const outcome = this.importer.importCredentials(request.payload.provider);
-        return { imported: true, provider: outcome.provider, method: outcome.method, configured: outcome.configured };
+        const result = {
+          imported: true,
+          provider: outcome.provider,
+          method: outcome.method,
+          configured: outcome.configured,
+        };
+        if (outcome.account) result.account = outcome.account;
+        return result;
+      }
+
+      case "HOST_CREDENTIAL_SOURCES": {
+        if (!this.importer) {
+          throw new HostFailure("SECURE_STORAGE_ERROR", "Credential import is unavailable in this host build.", false, request.requestId);
+        }
+        return { sources: this.importer.availableSources() };
       }
 
       case "HOST_MEMORY_GET": {

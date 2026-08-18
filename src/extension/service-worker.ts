@@ -267,7 +267,12 @@ async function handleHostBridgeRequest(message: HostBridgeRequest): Promise<Host
           provider: result.provider,
           method: result.method,
           configured: result.configured,
+          ...(result.account ? { account: result.account } : {}),
         };
+      }
+      case "GUIDE_HOST_CREDENTIAL_SOURCES": {
+        const result = await nativeHost.credentialSources();
+        return { ok: true, sources: result.sources };
       }
       case "GUIDE_HOST_MEMORY_GET": {
         const result = await nativeHost.memoryGet(message.origin);
