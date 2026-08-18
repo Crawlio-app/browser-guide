@@ -99,6 +99,28 @@ describe("native messaging protocol", () => {
     })).toBe(true);
   });
 
+  it("survives a helper that is a version behind or ahead of the extension", () => {
+    // The extension reloads with every build; the helper only changes when it
+    // is reinstalled, so these two shapes coexist in the wild. Rejecting
+    // either one closes the port and takes the whole product down, which is
+    // exactly what a required `claude` field once did.
+    const older = { version: 1, requestId, ok: true, data: { ready: true, configured: true, model: "gpt-realtime" } };
+    const newer = { version: 1, requestId, ok: true, data: { ready: true, configured: true, claude: true, model: "gpt-realtime" } };
+    expect(isNativeHostResponseFor(older, "HOST_HEALTH", requestId)).toBe(true);
+    expect(isNativeHostResponseFor(newer, "HOST_HEALTH", requestId)).toBe(true);
+    expect(isHostHealthResponse({ ok: true, health: { ready: true, configured: false } })).toBe(true);
+    expect(isHostHealthResponse({ ok: true, health: { ready: true, configured: false, claude: false } })).toBe(true);
+
+    // Still strict about the things that carry meaning.
+    expect(isNativeHostResponseFor({
+      version: 1,
+      requestId,
+      ok: true,
+      data: { ready: true, configured: true, claude: "yes" },
+    }, "HOST_HEALTH", requestId)).toBe(false);
+    expect(isHostHealthResponse({ ok: true, health: { ready: true, configured: true, unexpected: 1 } })).toBe(false);
+  });
+
   it("bounds the per-site memory messages to real web origins and sized text", () => {
     const origin = "https://example.test";
     expect(isNativeHostRequest({ version: 1, requestId, type: "HOST_MEMORY_GET", payload: { origin } })).toBe(true);

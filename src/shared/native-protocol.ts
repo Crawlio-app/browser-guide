@@ -97,8 +97,15 @@ export interface CompletionMessage {
 export interface NativeHealthData {
   ready: true;
   configured: boolean;
-  /** Whether an imported Claude sign-in exists, enabling the Claude engine. */
-  claude: boolean;
+  /**
+   * Whether an imported Claude sign-in exists, enabling the Claude engine.
+   * Optional on purpose: the extension reloads with every build while the
+   * helper only changes when it is reinstalled, so the two halves are
+   * routinely a version apart. Any field added here must stay optional, or a
+   * helper that predates it is rejected as an invalid response and the whole
+   * product stops working until the user reinstalls.
+   */
+  claude?: boolean;
   model?: string;
 }
 
@@ -516,8 +523,8 @@ export function isNativeHealthData(value: unknown): value is NativeHealthData {
   return isRecord(value)
     && value.ready === true
     && typeof value.configured === "boolean"
-    && typeof value.claude === "boolean"
-    && hasExactKeys(value, ["ready", "configured", "claude"], ["model"])
+    && (value.claude === undefined || typeof value.claude === "boolean")
+    && hasExactKeys(value, ["ready", "configured"], ["claude", "model"])
     && (value.model === undefined || isBoundedString(value.model, 1, NATIVE_MAX_MODEL_BYTES));
 }
 

@@ -36,14 +36,21 @@ const memoryNotes = new Map();
 function respond(request) {
   const base = { version: 1, requestId: request.requestId, ok: true };
   switch (request.type) {
-    case "HOST_HEALTH":
-      write({ ...base, data: {
+    case "HOST_HEALTH": {
+      // Legacy mode reproduces a helper installed before the claude flag
+      // existed, which is the routine state whenever the extension is
+      // rebuilt without reinstalling the helper.
+      const health = {
         ready: true,
         configured: process.env.BROWSER_GUIDE_TEST_OPENAI !== "0",
-        claude: process.env.BROWSER_GUIDE_TEST_CLAUDE === "1",
         model: "gpt-realtime",
-      } });
+      };
+      if (process.env.BROWSER_GUIDE_TEST_LEGACY_HEALTH !== "1") {
+        health.claude = process.env.BROWSER_GUIDE_TEST_CLAUDE === "1";
+      }
+      write({ ...base, data: health });
       break;
+    }
     case "HOST_CREATE_SESSION":
       write({ ...base, data: { answerSdp: "v=0\r\ns=browser-guide-controlled-answer\r\n", upstreamRequestId: "req_e2e" } });
       break;
