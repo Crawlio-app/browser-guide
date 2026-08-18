@@ -145,6 +145,9 @@ describe.skipIf(!existsSync(chromiumPath))("sign-in surface", () => {
     await expect.poll(() => setupTitle(panel), { timeout: 20_000 }).toBe("The helper did not answer");
     expect(await panel.locator(".setup-action").textContent()).toBe("Try again");
     expect(await panel.locator(".install-command").count()).toBe(0);
+    // The transport reason for this state only repeats the headline in
+    // vocabulary nobody outside this codebase uses, so it stays off screen.
+    expect(await panel.locator(".setup-error").count()).toBe(0);
   }, 90_000);
 
   it("does ask for an install when Chrome has no helper registered at all", async () => {

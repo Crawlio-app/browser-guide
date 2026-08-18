@@ -337,14 +337,21 @@ function BrowserGuideApp(): React.ReactElement {
           setIssue({ kind: "key", message: response.error });
           return;
         }
-        const notInstalled = isHostHealthResponse(response) && !response.ok && response.code === "HOST_NOT_FOUND";
+        const code = isHostHealthResponse(response) && !response.ok ? response.code : "INVALID_RESPONSE";
+        const notInstalled = code === "HOST_NOT_FOUND";
         setSetup(notInstalled ? "helper-missing" : "helper-unreachable");
-        setIssue({
-          kind: "helper",
-          message: hostError(response, notInstalled
-            ? "Open Browser Guide Helper once, then check again."
-            : "The local helper did not answer. Try again."),
-        });
+        setIssue(notInstalled || !restatesTheHeadline(code)
+          ? {
+            kind: "helper",
+            message: hostError(response, notInstalled
+              ? "Open Browser Guide Helper once, then check again."
+              : "The local helper did not answer. Try again."),
+          }
+          // A dropped port, a timeout, and an unavailable host all say the same
+          // thing the card already says, in transport vocabulary. Repeating it
+          // in red adds alarm, not information. Reasons that differ from the
+          // headline, like a store that could not be read, still show.
+          : null);
         return;
       }
       setAccount(response.health.account ?? null);
@@ -1410,6 +1417,11 @@ interface SetupViewProps {
   onPermission(): Promise<void>;
   onRetry(showBoot?: boolean): Promise<void>;
   onDemo(): void;
+}
+
+/** Transport codes whose message only repeats "the helper did not answer". */
+function restatesTheHeadline(code: string): boolean {
+  return code === "HOST_UNAVAILABLE" || code === "HOST_DISCONNECTED" || code === "TIMEOUT";
 }
 
 const PROVIDER_NAMES: Record<CredentialProvider, string> = {
