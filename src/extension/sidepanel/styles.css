@@ -357,6 +357,32 @@ input:disabled {
   line-height: 1.45;
 }
 
+/* Progress, not failure. Same place, ordinary voice. */
+.setup-note {
+  margin: 14px 0 0;
+  color: var(--text-body);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.signin-link {
+  justify-self: start;
+  margin: -4px 0 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color var(--fast) var(--ease);
+}
+
+.signin-link:hover {
+  color: var(--text-primary);
+}
+
 .setup-privacy {
   display: flex;
   align-items: center;

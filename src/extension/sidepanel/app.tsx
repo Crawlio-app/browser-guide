@@ -63,6 +63,8 @@ interface UiIssue {
   kind: "helper" | "key" | "page" | "microphone" | "realtime" | "stale";
   message: string;
   retryQuestion?: string;
+  /** A step forward rather than a failure. Rendered plainly, never in red. */
+  tone?: "note";
 }
 
 const INITIAL_RUNTIME: ExtensionRuntimeState = {
@@ -840,10 +842,18 @@ function BrowserGuideApp(): React.ReactElement {
       if (response.configured) {
         setSetup("ready");
       } else {
+        // The import worked. Saying so in red taught people that a button that
+        // did its job had failed, and left them clicking it again.
+        const who = response.account?.plan
+          ? `${providerName(response.provider)} (${response.account.plan})`
+          : providerName(response.provider);
         setIssue({
           kind: "key",
-          message: "Claude Code connected. Realtime voice still needs an OpenAI credential: use the Codex sign-in or paste a key.",
+          tone: "note",
+          message: `${who} is connected and stored on this Mac. Answering still needs an OpenAI credential, so add a key below to finish.`,
         });
+        // What is connected has changed, so what setup should offer has too.
+        void loadCredentialSources();
       }
     } catch (error) {
       if (epoch !== authEpoch.current) return;
@@ -851,7 +861,7 @@ function BrowserGuideApp(): React.ReactElement {
     } finally {
       setKeyBusy(false);
     }
-  }, [keyBusy]);
+  }, [keyBusy, loadCredentialSources]);
 
   const configureApiKey = useCallback(async () => {
     if (keyBusy) return;
@@ -1482,6 +1492,7 @@ function expiryNotice(account: NativeAccountIdentity | null): string | null {
 }
 
 const INSTALL_COMMAND = "npx crawlio-browser-guide init";
+const OPENAI_KEYS_URL = "https://platform.openai.com/api-keys";
 
 function InstallCommandRow(): React.ReactElement {
   const [copied, setCopied] = useState(false);
@@ -1610,6 +1621,14 @@ function SignInOptions(props: SetupViewProps): React.ReactElement {
       {keyOpen ? (
         <>
           <label htmlFor="platform-key">OpenAI API key</label>
+          {/* The one web sign-in we can honestly offer. Reading a key out of a
+              harness only works when that harness holds one, and a ChatGPT
+              plan sign-in does not: the key has to be minted here. */}
+          <button
+            type="button"
+            className="signin-link"
+            onClick={() => window.open(OPENAI_KEYS_URL, "_blank", "noopener")}
+          >Get a key at platform.openai.com</button>
           <input
             id="platform-key"
             ref={props.keyInput}
@@ -1659,7 +1678,11 @@ function SetupView(props: SetupViewProps): React.ReactElement {
         </>
       ) : <span className="setup-loader" aria-hidden="true" />}
 
-      {props.issue && <p className="setup-error" role="status">{props.issue.message}</p>}
+      {props.issue && (
+        <p className={props.issue.tone === "note" ? "setup-note" : "setup-error"} role="status">
+          {props.issue.message}
+        </p>
+      )}
       <p className="setup-privacy"><span aria-hidden="true" />{copy.privacy}</p>
     </section>
   );
