@@ -13,7 +13,10 @@ import {
   type NativeHealthData,
   type NativeHostRequest,
   type NativeHostResponse,
+  type CompletionMessage,
   type NativeClearEvidenceData,
+  type NativeCompleteData,
+  type NativeTranscribeData,
   type NativeMemoryAppendData,
   type NativeMemoryClearData,
   type NativeMemoryGetData,
@@ -74,6 +77,8 @@ interface NativeDataByRequest {
   HOST_MEMORY_CLEAR: NativeMemoryClearData;
   HOST_PUBLISH_EVIDENCE: NativePublishEvidenceData;
   HOST_CLEAR_EVIDENCE: NativeClearEvidenceData;
+  HOST_TRANSCRIBE: NativeTranscribeData;
+  HOST_COMPLETE: NativeCompleteData;
 }
 
 export class NativeHostClientError extends Error {
@@ -165,6 +170,16 @@ export class NativeHostClient {
     return this.runBounded(request, NATIVE_TIMEOUT_MS.evidence);
   }
 
+  transcribe(audio: string): Promise<NativeTranscribeData> {
+    const request = this.makeRequest("HOST_TRANSCRIBE", { audio, format: "wav" });
+    return this.runBounded(request, NATIVE_TIMEOUT_MS.transcribe);
+  }
+
+  complete(messages: CompletionMessage[]): Promise<NativeCompleteData> {
+    const request = this.makeRequest("HOST_COMPLETE", { messages });
+    return this.runBounded(request, NATIVE_TIMEOUT_MS.complete);
+  }
+
   disconnect(): void {
     this.generation += 1;
     this.connectionPromise = null;
@@ -211,13 +226,23 @@ export class NativeHostClient {
   ): Extract<NativeHostRequest, { type: "HOST_PUBLISH_EVIDENCE" }>;
   private makeRequest(type: "HOST_CLEAR_EVIDENCE"): Extract<NativeHostRequest, { type: "HOST_CLEAR_EVIDENCE" }>;
   private makeRequest(
+    type: "HOST_TRANSCRIBE",
+    payload: { audio: string; format: "wav" },
+  ): Extract<NativeHostRequest, { type: "HOST_TRANSCRIBE" }>;
+  private makeRequest(
+    type: "HOST_COMPLETE",
+    payload: { messages: CompletionMessage[] },
+  ): Extract<NativeHostRequest, { type: "HOST_COMPLETE" }>;
+  private makeRequest(
     type: NativeRequestType,
     payload?: { key: string }
       | { sdp: string; mode: RealtimeSessionMode }
       | { provider: CredentialProvider }
       | { origin: string }
       | { origin: string; question: string; answer: string }
-      | { origin: string; title: string; evidence: string },
+      | { origin: string; title: string; evidence: string }
+      | { audio: string; format: "wav" }
+      | { messages: CompletionMessage[] },
   ): NativeHostRequest {
     const requestId = this.createRequestId();
     let request: NativeHostRequest;
@@ -273,6 +298,22 @@ export class NativeHostClient {
         break;
       case "HOST_CLEAR_EVIDENCE":
         request = { version: NATIVE_PROTOCOL_VERSION, requestId, type };
+        break;
+      case "HOST_TRANSCRIBE":
+        request = {
+          version: NATIVE_PROTOCOL_VERSION,
+          requestId,
+          type,
+          payload: payload as { audio: string; format: "wav" },
+        };
+        break;
+      case "HOST_COMPLETE":
+        request = {
+          version: NATIVE_PROTOCOL_VERSION,
+          requestId,
+          type,
+          payload: payload as { messages: CompletionMessage[] },
+        };
         break;
     }
     if (!isNativeHostRequest(request)) {

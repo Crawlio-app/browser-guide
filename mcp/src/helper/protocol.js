@@ -12,6 +12,11 @@ export const MAX_SDP_BYTES = 512 * 1024;
 export const MAX_API_KEY_BYTES = 503;
 export const MAX_EVIDENCE_TITLE = 300;
 export const MAX_EVIDENCE_CHARS = 200_000;
+export const MAX_TRANSCRIBE_AUDIO_B64_CHARS = 760_000;
+export const MAX_COMPLETION_MESSAGES = 24;
+export const MAX_COMPLETION_BLOCKS = 8;
+export const MAX_COMPLETION_TEXT_CHARS = 30_000;
+export const MAX_TOOL_RESULT_CHARS = 4_000;
 export const UNKNOWN_REQUEST_ID = "00000000-0000-4000-8000-000000000000";
 
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -94,7 +99,7 @@ export function decodeRequest(data) {
   const knownTypes = [
     "HOST_HEALTH", "HOST_CONFIGURE_KEY", "HOST_FORGET_KEY", "HOST_CREATE_SESSION",
     "HOST_IMPORT_CREDENTIALS", "HOST_MEMORY_GET", "HOST_MEMORY_APPEND", "HOST_MEMORY_CLEAR",
-    "HOST_PUBLISH_EVIDENCE", "HOST_CLEAR_EVIDENCE",
+    "HOST_PUBLISH_EVIDENCE", "HOST_CLEAR_EVIDENCE", "HOST_TRANSCRIBE", "HOST_COMPLETE",
   ];
   if (typeof type !== "string" || !knownTypes.includes(type)) {
     throw invalid("The native request type is unsupported.", requestId);
@@ -165,6 +170,28 @@ export function decodeRequest(data) {
       return { requestId, type, payload: { origin: payload.origin, title: payload.title, evidence: payload.evidence } };
     }
 
+    case "HOST_TRANSCRIBE": {
+      const payload = exactPayload(object.payload, ["audio", "format"], requestId);
+      if (payload.format !== "wav"
+        || typeof payload.audio !== "string"
+        || payload.audio.length > MAX_TRANSCRIBE_AUDIO_B64_CHARS) {
+        throw invalid("The transcription payload is invalid.", requestId);
+      }
+      const wav = Buffer.from(payload.audio, "base64");
+      if (wav.length < 44 || wav.subarray(0, 4).toString("ascii") !== "RIFF") {
+        throw invalid("The transcription payload is invalid.", requestId);
+      }
+      return { requestId, type, payload: { wav } };
+    }
+
+    case "HOST_COMPLETE": {
+      const payload = exactPayload(object.payload, ["messages"], requestId);
+      if (!isValidCompletionMessages(payload.messages)) {
+        throw invalid("The completion payload is invalid.", requestId);
+      }
+      return { requestId, type, payload: { messages: payload.messages } };
+    }
+
     case "HOST_CREATE_SESSION": {
       const payload = exactPayload(object.payload, ["sdp", "mode"], requestId);
       if (typeof payload.sdp !== "string" || (payload.mode !== "text" && payload.mode !== "voice")) {
@@ -185,6 +212,40 @@ export function decodeRequest(data) {
     }
   }
   throw invalid("The native request type is unsupported.", requestId);
+}
+
+/** Bounded Anthropic-style conversation, mirroring isValidCompletionMessages
+ *  in HostProtocol.swift exactly. */
+function isValidCompletionMessages(messages) {
+  if (!Array.isArray(messages) || messages.length < 1 || messages.length > MAX_COMPLETION_MESSAGES) return false;
+  for (const message of messages) {
+    if (typeof message !== "object" || message === null || Array.isArray(message)) return false;
+    const keys = Object.keys(message);
+    if (keys.length !== 2 || !keys.includes("role") || !keys.includes("content")) return false;
+    if (message.role !== "user" && message.role !== "assistant") return false;
+    const content = message.content;
+    if (!Array.isArray(content) || content.length < 1 || content.length > MAX_COMPLETION_BLOCKS) return false;
+    for (const block of content) {
+      if (typeof block !== "object" || block === null || Array.isArray(block)) return false;
+      const blockKeys = new Set(Object.keys(block));
+      if (block.type === "text") {
+        if (blockKeys.size !== 2 || !blockKeys.has("text")) return false;
+        if (typeof block.text !== "string" || block.text.length === 0 || block.text.length > MAX_COMPLETION_TEXT_CHARS) return false;
+      } else if (block.type === "tool_use") {
+        if (blockKeys.size !== 4 || !blockKeys.has("id") || !blockKeys.has("name") || !blockKeys.has("input")) return false;
+        if (typeof block.id !== "string" || block.id.length === 0 || block.id.length > 200) return false;
+        if (block.name !== "show_guidance" && block.name !== "clear_guidance") return false;
+        if (typeof block.input !== "object" || block.input === null || Array.isArray(block.input)) return false;
+      } else if (block.type === "tool_result") {
+        if (blockKeys.size !== 3 || !blockKeys.has("tool_use_id") || !blockKeys.has("content")) return false;
+        if (typeof block.tool_use_id !== "string" || block.tool_use_id.length === 0 || block.tool_use_id.length > 200) return false;
+        if (typeof block.content !== "string" || block.content.length > MAX_TOOL_RESULT_CHARS) return false;
+      } else {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 export function encodeSuccess(requestId, data) {

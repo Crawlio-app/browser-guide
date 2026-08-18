@@ -37,7 +37,12 @@ function respond(request) {
   const base = { version: 1, requestId: request.requestId, ok: true };
   switch (request.type) {
     case "HOST_HEALTH":
-      write({ ...base, data: { ready: true, configured: true, model: "gpt-realtime" } });
+      write({ ...base, data: {
+        ready: true,
+        configured: process.env.BROWSER_GUIDE_TEST_OPENAI !== "0",
+        claude: process.env.BROWSER_GUIDE_TEST_CLAUDE === "1",
+        model: "gpt-realtime",
+      } });
       break;
     case "HOST_CREATE_SESSION":
       write({ ...base, data: { answerSdp: "v=0\r\ns=browser-guide-controlled-answer\r\n", upstreamRequestId: "req_e2e" } });
@@ -70,6 +75,30 @@ function respond(request) {
     case "HOST_CLEAR_EVIDENCE":
       write({ ...base, data: { cleared: true } });
       break;
+    case "HOST_TRANSCRIBE":
+      write({ ...base, data: { transcript: "Where is Review invoices?" } });
+      break;
+    case "HOST_COMPLETE": {
+      const serialized = JSON.stringify(request.payload?.messages ?? []);
+      const alreadyPointed = serialized.includes("tool_result");
+      if (!alreadyPointed && /review invoices/i.test(serialized)) {
+        write({ ...base, data: {
+          content: [{
+            type: "tool_use",
+            id: "toolu_stub_1",
+            name: "show_guidance",
+            input: { refs: ["e2"], title: "Review invoices", body: "This button opens your invoices.", presentation: "point", waitFor: "none" },
+          }],
+          stopReason: "tool_use",
+        } });
+      } else {
+        write({ ...base, data: {
+          content: [{ type: "text", text: alreadyPointed ? "Review invoices is highlighted on the page." : "This page is a billing console." }],
+          stopReason: "end_turn",
+        } });
+      }
+      break;
+    }
     default:
       write({
         version: 1,

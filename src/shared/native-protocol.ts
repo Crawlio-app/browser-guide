@@ -17,6 +17,13 @@ export const NATIVE_MAX_MEMORY_ANSWER_CHARS = 4_000;
 export const NATIVE_MAX_ORIGIN_CHARS = 500;
 export const NATIVE_MAX_EVIDENCE_TITLE_CHARS = 300;
 export const NATIVE_MAX_EVIDENCE_CHARS = 200_000;
+// Sized against the 768 KiB framed-envelope ceiling AFTER base64 inflation:
+// ~557 KiB of raw 16 kHz mono 16-bit WAV, roughly 17 seconds of speech.
+export const NATIVE_MAX_TRANSCRIBE_AUDIO_B64_CHARS = 760_000;
+export const NATIVE_MAX_COMPLETION_MESSAGES = 24;
+export const NATIVE_MAX_COMPLETION_BLOCKS = 8;
+export const NATIVE_MAX_COMPLETION_TEXT_CHARS = 30_000;
+export const NATIVE_MAX_TOOL_RESULT_CHARS = 4_000;
 
 export const NATIVE_TIMEOUT_MS = {
   connect: 3_000,
@@ -26,6 +33,8 @@ export const NATIVE_TIMEOUT_MS = {
   importCredentials: 8_000,
   memory: 5_000,
   evidence: 5_000,
+  transcribe: 20_000,
+  complete: 60_000,
   createSession: 30_000,
 } as const;
 
@@ -39,7 +48,9 @@ export type NativeRequestType =
   | "HOST_MEMORY_APPEND"
   | "HOST_MEMORY_CLEAR"
   | "HOST_PUBLISH_EVIDENCE"
-  | "HOST_CLEAR_EVIDENCE";
+  | "HOST_CLEAR_EVIDENCE"
+  | "HOST_TRANSCRIBE"
+  | "HOST_COMPLETE";
 export type CredentialProvider = "codex" | "claude-code";
 export type RealtimeSessionMode = "text" | "voice";
 
@@ -53,11 +64,41 @@ export type NativeHostRequest =
   | { version: 1; requestId: string; type: "HOST_MEMORY_APPEND"; payload: { origin: string; question: string; answer: string } }
   | { version: 1; requestId: string; type: "HOST_MEMORY_CLEAR"; payload?: { origin: string } }
   | { version: 1; requestId: string; type: "HOST_PUBLISH_EVIDENCE"; payload: { origin: string; title: string; evidence: string } }
-  | { version: 1; requestId: string; type: "HOST_CLEAR_EVIDENCE" };
+  | { version: 1; requestId: string; type: "HOST_CLEAR_EVIDENCE" }
+  | { version: 1; requestId: string; type: "HOST_TRANSCRIBE"; payload: { audio: string; format: "wav" } }
+  | { version: 1; requestId: string; type: "HOST_COMPLETE"; payload: { messages: CompletionMessage[] } };
+
+export interface CompletionTextBlock {
+  type: "text";
+  text: string;
+}
+
+export interface CompletionToolUseBlock {
+  type: "tool_use";
+  id: string;
+  name: "show_guidance" | "clear_guidance";
+  input: Record<string, unknown>;
+}
+
+export interface CompletionToolResultBlock {
+  type: "tool_result";
+  tool_use_id: string;
+  content: string;
+}
+
+export type CompletionRequestBlock = CompletionTextBlock | CompletionToolUseBlock | CompletionToolResultBlock;
+export type CompletionResponseBlock = CompletionTextBlock | CompletionToolUseBlock;
+
+export interface CompletionMessage {
+  role: "user" | "assistant";
+  content: CompletionRequestBlock[];
+}
 
 export interface NativeHealthData {
   ready: true;
   configured: boolean;
+  /** Whether an imported Claude sign-in exists, enabling the Claude engine. */
+  claude: boolean;
   model?: string;
 }
 
@@ -107,6 +148,15 @@ export interface NativeClearEvidenceData {
   cleared: true;
 }
 
+export interface NativeTranscribeData {
+  transcript: string;
+}
+
+export interface NativeCompleteData {
+  content: CompletionResponseBlock[];
+  stopReason: string;
+}
+
 export type NativeSuccessData =
   | NativeHealthData
   | NativeConfigureData
@@ -117,7 +167,9 @@ export type NativeSuccessData =
   | NativeMemoryAppendData
   | NativeMemoryClearData
   | NativePublishEvidenceData
-  | NativeClearEvidenceData;
+  | NativeClearEvidenceData
+  | NativeTranscribeData
+  | NativeCompleteData;
 
 export const NATIVE_HOST_ERROR_CODES = [
   "INVALID_REQUEST",
@@ -154,6 +206,8 @@ export type HostBridgeRequest =
   | { type: "GUIDE_HOST_MEMORY_CLEAR"; origin?: string }
   | { type: "GUIDE_HOST_PUBLISH_EVIDENCE"; origin: string; title: string; evidence: string }
   | { type: "GUIDE_HOST_CLEAR_EVIDENCE" }
+  | { type: "GUIDE_HOST_TRANSCRIBE"; audio: string; format: "wav" }
+  | { type: "GUIDE_HOST_COMPLETE"; messages: CompletionMessage[] }
   | { type: "GUIDE_HOST_DISCONNECT" };
 
 export type HostClientErrorCode = NativeHostErrorCode
@@ -225,6 +279,17 @@ export interface HostClearEvidenceResponse {
   cleared: true;
 }
 
+export interface HostTranscribeResponse {
+  ok: true;
+  transcript: string;
+}
+
+export interface HostCompleteResponse {
+  ok: true;
+  content: CompletionResponseBlock[];
+  stopReason: string;
+}
+
 export interface HostDisconnectResponse {
   ok: true;
 }
@@ -240,6 +305,8 @@ export type HostClientResponse = HostClientFailure
   | HostMemoryClearResponse
   | HostPublishEvidenceResponse
   | HostClearEvidenceResponse
+  | HostTranscribeResponse
+  | HostCompleteResponse
   | HostDisconnectResponse;
 
 export function isHostBridgeRequest(value: unknown): value is HostBridgeRequest {
@@ -274,6 +341,13 @@ export function isHostBridgeRequest(value: unknown): value is HostBridgeRequest 
         && isEvidenceText(value.evidence);
     case "GUIDE_HOST_CLEAR_EVIDENCE":
       return hasExactKeys(value, ["type"]);
+    case "GUIDE_HOST_TRANSCRIBE":
+      return hasExactKeys(value, ["type", "audio", "format"])
+        && value.format === "wav"
+        && isTranscribeAudio(value.audio);
+    case "GUIDE_HOST_COMPLETE":
+      return hasExactKeys(value, ["type", "messages"])
+        && isCompletionMessages(value.messages);
     default:
       return false;
   }
@@ -332,6 +406,17 @@ export function isNativeHostRequest(value: unknown): value is NativeHostRequest 
         && isEvidenceText(value.payload.evidence);
     case "HOST_CLEAR_EVIDENCE":
       return hasExactKeys(value, ["version", "requestId", "type"]);
+    case "HOST_TRANSCRIBE":
+      return hasExactKeys(value, ["version", "requestId", "type", "payload"])
+        && isRecord(value.payload)
+        && hasExactKeys(value.payload, ["audio", "format"])
+        && value.payload.format === "wav"
+        && isTranscribeAudio(value.payload.audio);
+    case "HOST_COMPLETE":
+      return hasExactKeys(value, ["version", "requestId", "type", "payload"])
+        && isRecord(value.payload)
+        && hasExactKeys(value.payload, ["messages"])
+        && isCompletionMessages(value.payload.messages);
     default:
       return false;
   }
@@ -374,6 +459,10 @@ export function isNativeHostResponseFor(
       return isNativePublishEvidenceData(value.data);
     case "HOST_CLEAR_EVIDENCE":
       return isNativeClearEvidenceData(value.data);
+    case "HOST_TRANSCRIBE":
+      return isNativeTranscribeData(value.data);
+    case "HOST_COMPLETE":
+      return isNativeCompleteData(value.data);
   }
 }
 
@@ -427,7 +516,8 @@ export function isNativeHealthData(value: unknown): value is NativeHealthData {
   return isRecord(value)
     && value.ready === true
     && typeof value.configured === "boolean"
-    && hasExactKeys(value, ["ready", "configured"], ["model"])
+    && typeof value.claude === "boolean"
+    && hasExactKeys(value, ["ready", "configured", "claude"], ["model"])
     && (value.model === undefined || isBoundedString(value.model, 1, NATIVE_MAX_MODEL_BYTES));
 }
 
@@ -536,6 +626,96 @@ export function isHostClearEvidenceResponse(value: unknown): value is HostClearE
     && value.ok === true
     && value.cleared === true
     && hasExactKeys(value, ["ok", "cleared"]));
+}
+
+export function isNativeTranscribeData(value: unknown): value is NativeTranscribeData {
+  return isRecord(value)
+    && hasExactKeys(value, ["transcript"])
+    && typeof value.transcript === "string"
+    && value.transcript.length >= 1
+    && value.transcript.length <= 4_000;
+}
+
+export function isNativeCompleteData(value: unknown): value is NativeCompleteData {
+  return isRecord(value)
+    && hasExactKeys(value, ["content", "stopReason"])
+    && isCompletionResponseContent(value.content)
+    && typeof value.stopReason === "string"
+    && value.stopReason.length <= 40;
+}
+
+export function isHostTranscribeResponse(value: unknown): value is HostTranscribeResponse | HostClientFailure {
+  return isHostClientFailure(value) || (isRecord(value)
+    && value.ok === true
+    && hasExactKeys(value, ["ok", "transcript"])
+    && typeof value.transcript === "string"
+    && value.transcript.length >= 1
+    && value.transcript.length <= 4_000);
+}
+
+export function isHostCompleteResponse(value: unknown): value is HostCompleteResponse | HostClientFailure {
+  return isHostClientFailure(value) || (isRecord(value)
+    && value.ok === true
+    && hasExactKeys(value, ["ok", "content", "stopReason"])
+    && isCompletionResponseContent(value.content)
+    && typeof value.stopReason === "string"
+    && value.stopReason.length <= 40);
+}
+
+function isTranscribeAudio(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length >= 60
+    && value.length <= NATIVE_MAX_TRANSCRIBE_AUDIO_B64_CHARS
+    // RIFF little-endian magic in base64; full validation happens host-side.
+    && value.startsWith("UklGR")
+    && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+}
+
+function isCompletionTextBlock(value: unknown): value is CompletionTextBlock {
+  return isRecord(value)
+    && hasExactKeys(value, ["type", "text"])
+    && value.type === "text"
+    && typeof value.text === "string"
+    && value.text.length >= 1
+    && value.text.length <= NATIVE_MAX_COMPLETION_TEXT_CHARS;
+}
+
+function isCompletionToolUseBlock(value: unknown): value is CompletionToolUseBlock {
+  return isRecord(value)
+    && hasExactKeys(value, ["type", "id", "name", "input"])
+    && value.type === "tool_use"
+    && typeof value.id === "string" && value.id.length >= 1 && value.id.length <= 200
+    && (value.name === "show_guidance" || value.name === "clear_guidance")
+    && isRecord(value.input);
+}
+
+function isCompletionToolResultBlock(value: unknown): value is CompletionToolResultBlock {
+  return isRecord(value)
+    && hasExactKeys(value, ["type", "tool_use_id", "content"])
+    && value.type === "tool_result"
+    && typeof value.tool_use_id === "string" && value.tool_use_id.length >= 1 && value.tool_use_id.length <= 200
+    && typeof value.content === "string"
+    && value.content.length <= NATIVE_MAX_TOOL_RESULT_CHARS;
+}
+
+export function isCompletionMessages(value: unknown): value is CompletionMessage[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > NATIVE_MAX_COMPLETION_MESSAGES) return false;
+  return value.every((message) => isRecord(message)
+    && hasExactKeys(message, ["role", "content"])
+    && (message.role === "user" || message.role === "assistant")
+    && Array.isArray(message.content)
+    && message.content.length >= 1
+    && message.content.length <= NATIVE_MAX_COMPLETION_BLOCKS
+    && message.content.every((block) => isCompletionTextBlock(block)
+      || isCompletionToolUseBlock(block)
+      || isCompletionToolResultBlock(block)));
+}
+
+export function isCompletionResponseContent(value: unknown): value is CompletionResponseBlock[] {
+  return Array.isArray(value)
+    && value.length >= 1
+    && value.length <= NATIVE_MAX_COMPLETION_BLOCKS
+    && value.every((block) => isCompletionTextBlock(block) || isCompletionToolUseBlock(block));
 }
 
 export function isWebOrigin(value: unknown): value is string {

@@ -289,6 +289,14 @@ async function handleHostBridgeRequest(message: HostBridgeRequest): Promise<Host
         const result = await nativeHost.clearEvidence();
         return { ok: true, cleared: result.cleared };
       }
+      case "GUIDE_HOST_TRANSCRIBE": {
+        const result = await nativeHost.transcribe(message.audio);
+        return { ok: true, transcript: result.transcript };
+      }
+      case "GUIDE_HOST_COMPLETE": {
+        const result = await nativeHost.complete(message.messages);
+        return { ok: true, content: result.content, stopReason: result.stopReason };
+      }
       case "GUIDE_HOST_CREATE_SESSION": {
         const result = await nativeHost.createSession(message.sdp, message.mode);
         return {

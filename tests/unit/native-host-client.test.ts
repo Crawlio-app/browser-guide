@@ -78,11 +78,11 @@ describe("NativeHostClient", () => {
     expect(harness.connectNative).toHaveBeenCalledOnce();
     expect(harness.ports[0]?.messages.map((message) => message.type)).toEqual(["HOST_HEALTH", "HOST_HEALTH"]);
     expect(harness.client.connectionState).toBe("CONNECTING");
-    harness.ports[0]?.respond(0, { ready: true, configured: false });
-    harness.ports[0]?.respond(1, { ready: true, configured: true, model: "gpt-realtime" });
+    harness.ports[0]?.respond(0, { ready: true, configured: false, claude: false });
+    harness.ports[0]?.respond(1, { ready: true, configured: true, claude: false, model: "gpt-realtime" });
 
-    await expect(first).resolves.toEqual({ ready: true, configured: false });
-    await expect(second).resolves.toEqual({ ready: true, configured: true, model: "gpt-realtime" });
+    await expect(first).resolves.toEqual({ ready: true, configured: false, claude: false });
+    await expect(second).resolves.toEqual({ ready: true, configured: true, claude: false, model: "gpt-realtime" });
     expect(harness.client.connectionState).toBe("OPEN");
   });
 
@@ -90,7 +90,7 @@ describe("NativeHostClient", () => {
     const harness = createHarness();
     const health = harness.client.health();
     await vi.waitFor(() => expect(harness.ports[0]?.messages).toHaveLength(1));
-    harness.ports[0]?.respond(0, { ready: true, configured: true });
+    harness.ports[0]?.respond(0, { ready: true, configured: true, claude: false });
     await health;
 
     const session = harness.client.createSession("v=0\r\ns=offer\r\n", "voice");
@@ -176,7 +176,7 @@ describe("NativeHostClient", () => {
       version: 1,
       requestId: request?.requestId,
       ok: true,
-      data: { ready: true, configured: true },
+      data: { ready: true, configured: true, claude: false },
       extra: true,
     });
 

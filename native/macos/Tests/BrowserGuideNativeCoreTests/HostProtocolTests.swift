@@ -106,4 +106,65 @@ final class HostProtocolTests: XCTestCase {
         XCTAssertEqual(failure.code, code, file: file, line: line)
         XCTAssertEqual(failure.requestID, requestID, file: file, line: line)
     }
+
+    func testDecodesAndRejectsClaudeEnginePayloads() throws {
+        let wav = Data("RIFF".utf8) + Data(repeating: 0, count: 60)
+        let decoded = try decode([
+            "version": 1,
+            "requestId": requestID,
+            "type": "HOST_TRANSCRIBE",
+            "payload": ["audio": wav.base64EncodedString(), "format": "wav"],
+        ])
+        XCTAssertEqual(decoded, HostRequest(requestID: requestID, type: .transcribe, payload: .transcribe(wavData: wav)))
+
+        XCTAssertThrowsError(try decode([
+            "version": 1,
+            "requestId": requestID,
+            "type": "HOST_TRANSCRIBE",
+            "payload": ["audio": Data("not-riff-data-here-at-all-really-long".utf8).base64EncodedString(), "format": "wav"],
+        ]))
+        XCTAssertThrowsError(try decode([
+            "version": 1,
+            "requestId": requestID,
+            "type": "HOST_TRANSCRIBE",
+            "payload": ["audio": "@@not-base64@@", "format": "wav"],
+        ]))
+
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": [["type": "text", "text": "What is this page?"]]],
+            ["role": "assistant", "content": [
+                ["type": "tool_use", "id": "toolu_1", "name": "show_guidance", "input": ["refs": ["e2"]]],
+            ]],
+            ["role": "user", "content": [
+                ["type": "tool_result", "tool_use_id": "toolu_1", "content": "{\"ok\":true}"],
+            ]],
+        ]
+        let completeRequest = try decode([
+            "version": 1,
+            "requestId": requestID,
+            "type": "HOST_COMPLETE",
+            "payload": ["messages": messages],
+        ])
+        guard case .complete(let messagesData) = completeRequest.payload else {
+            return XCTFail("expected a complete payload")
+        }
+        let roundTripped = try XCTUnwrap(JSONSerialization.jsonObject(with: messagesData) as? [[String: Any]])
+        XCTAssertEqual(roundTripped.count, 3)
+
+        // Unknown block types, foreign tool names, and extra keys are rejected.
+        for badMessages in [
+            [["role": "system", "content": [["type": "text", "text": "x"]]]],
+            [["role": "user", "content": [["type": "image", "source": "x"]]]],
+            [["role": "user", "content": [["type": "text", "text": "x", "extra": true]]]],
+            [["role": "user", "content": [["type": "tool_use", "id": "1", "name": "execute", "input": [:] as [String: Any]]]]],
+            [["role": "user", "content": [] as [[String: Any]]]],
+        ] as [[[String: Any]]] {
+            XCTAssertThrowsError(try decode([
+                "version": 1,
+                "requestId": requestID,
+                "type": "HOST_COMPLETE",
+                "payload": ["messages": badMessages],
+            ]), "should reject \(badMessages)")
+        }
+    }
 }

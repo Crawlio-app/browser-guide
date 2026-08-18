@@ -28,6 +28,9 @@ function writePrivateJson(path, object) {
   chmodSync(path, 0o600);
 }
 
+/** Five minutes, matching the early-expiry buffer the Swift store uses. */
+const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1_000;
+
 export class FileCredentialStore {
   constructor(storeUrl = configPath("BROWSER_GUIDE_CREDENTIALS_PATH", "credentials.json"), homeDirectory = homedir()) {
     this.storeUrl = storeUrl;
@@ -138,6 +141,43 @@ export class FileCredentialStore {
     if (typeof oauth.expiresAt === "number") credential.expires = oauth.expiresAt;
     this.#upsert("anthropic", credential);
     return { provider: "claude-code", method: "oauth", configured: this.readApiKey() !== null };
+  }
+
+  hasAnthropicCredential() {
+    try {
+      return typeof this.#load()?.anthropic?.access === "string";
+    } catch {
+      return false;
+    }
+  }
+
+  /** A non-expired Claude access token, re-synced from the source file when
+   *  the stored copy is near expiry. Never runs an OAuth refresh of our own. */
+  freshAnthropicAccessToken(nowMs = Date.now()) {
+    let anthropic;
+    try {
+      anthropic = this.#load()?.anthropic;
+    } catch {
+      return null;
+    }
+    if (typeof anthropic?.access !== "string") return null;
+    const expired = (credential) => typeof credential.expires === "number"
+      && nowMs >= credential.expires - TOKEN_EXPIRY_BUFFER_MS;
+    if (expired(anthropic)) {
+      try {
+        this.#importClaudeCode();
+        anthropic = this.#load()?.anthropic;
+      } catch {
+        // Fall through to the expiry check below with the stale copy.
+      }
+      if (!anthropic || expired(anthropic)) {
+        throw new CredentialStoreError(
+          "importSourceInvalid",
+          "Your Claude sign-in expired. Open Claude Code once to refresh it, then try again.",
+        );
+      }
+    }
+    return typeof anthropic.access === "string" ? anthropic.access : null;
   }
 
   /** Re-reads the Codex source once; true when a rotated key replaced ours. */

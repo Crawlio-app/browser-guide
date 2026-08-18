@@ -6,6 +6,7 @@ import { FrameDecoder, FramingError, encodeFrame } from "./framing.js";
 import { HostFailure, UNKNOWN_REQUEST_ID, decodeRequest, encodeFailure, encodeSuccess } from "./protocol.js";
 import { FileCredentialStore, SiteMemoryStore, SharedEvidenceStore } from "./stores.js";
 import { RealtimeClient } from "./realtime.js";
+import { AnthropicClient } from "./anthropic.js";
 import { HostService } from "./service.js";
 
 function makeService(environment = process.env) {
@@ -31,7 +32,8 @@ function makeService(environment = process.env) {
     })
     : new RealtimeClient();
 
-  return new HostService({ keyStore, importer, memory, evidence, realtimeClient });
+  const anthropicClient = useMemoryStore ? null : new AnthropicClient();
+  return new HostService({ keyStore, importer, memory, evidence, realtimeClient, anthropicClient });
 }
 
 function makeInMemoryKeyStore() {

@@ -51,7 +51,7 @@ describe("native messaging protocol", () => {
       version: 1,
       requestId,
       ok: true,
-      data: { ready: true, configured: false, model: "gpt-realtime" },
+      data: { ready: true, configured: false, claude: false, model: "gpt-realtime" },
     };
     expect(isNativeHostResponseFor(health, "HOST_HEALTH", requestId)).toBe(true);
     expect(isNativeHostResponseFor(health, "HOST_CONFIGURE_KEY", requestId)).toBe(false);
@@ -84,8 +84,8 @@ describe("native messaging protocol", () => {
     expect(isHostBridgeRequest({ type: "GUIDE_HOST_HEALTH", url: "http://127.0.0.1" })).toBe(false);
     expect(isHostBridgeRequest({ type: "GUIDE_HOST_CREATE_SESSION", sdp: offerSdp, mode: "screen" })).toBe(false);
 
-    expect(isHostHealthResponse({ ok: true, health: { ready: true, configured: true } })).toBe(true);
-    expect(isHostHealthResponse({ ok: true, health: { ready: true, configured: true, extra: true } })).toBe(false);
+    expect(isHostHealthResponse({ ok: true, health: { ready: true, configured: true, claude: false } })).toBe(true);
+    expect(isHostHealthResponse({ ok: true, health: { ready: true, configured: true, claude: false, extra: true } })).toBe(false);
     expect(isHostConfigureResponse({ ok: true, configured: true })).toBe(true);
     expect(isHostConfigureResponse({ ok: true, configured: false })).toBe(false);
     expect(isHostCreateSessionResponse({ ok: true, answerSdp, upstreamRequestId: "req_native-1" })).toBe(true);

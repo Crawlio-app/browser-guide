@@ -6,12 +6,13 @@ import { CredentialStoreError } from "./stores.js";
 import { RealtimeClientError } from "./realtime.js";
 
 export class HostService {
-  constructor({ keyStore, importer = null, memory = null, evidence = null, realtimeClient }) {
+  constructor({ keyStore, importer = null, memory = null, evidence = null, realtimeClient, anthropicClient = null }) {
     this.keyStore = keyStore;
     this.importer = importer;
     this.memory = memory;
     this.evidence = evidence;
     this.realtimeClient = realtimeClient;
+    this.anthropicClient = anthropicClient;
   }
 
   async handle(request) {
@@ -30,7 +31,12 @@ export class HostService {
   async #execute(request) {
     switch (request.type) {
       case "HOST_HEALTH":
-        return { ready: true, configured: this.keyStore.readApiKey() !== null, model: REALTIME_MODEL };
+        return {
+          ready: true,
+          configured: this.keyStore.readApiKey() !== null,
+          claude: this.importer?.hasAnthropicCredential() === true,
+          model: REALTIME_MODEL,
+        };
 
       case "HOST_CONFIGURE_KEY":
         this.keyStore.saveApiKey(request.payload.key);
@@ -73,6 +79,31 @@ export class HostService {
       case "HOST_CLEAR_EVIDENCE":
         this.evidence?.clear();
         return { cleared: true };
+
+      case "HOST_TRANSCRIBE":
+        // On-device speech recognition is macOS-only today (SFSpeechRecognizer).
+        throw new HostFailure(
+          "INTERNAL_ERROR",
+          "On-device transcription is not available on this platform yet. Voice needs the macOS helper.",
+          false,
+          request.requestId,
+        );
+
+      case "HOST_COMPLETE": {
+        if (!this.anthropicClient || !this.importer) {
+          throw new HostFailure("INTERNAL_ERROR", "The Claude engine is unavailable in this host build.", false, request.requestId);
+        }
+        const accessToken = this.importer.freshAnthropicAccessToken();
+        if (accessToken === null) {
+          throw new HostFailure(
+            "NOT_CONFIGURED",
+            "Connect your Claude Code sign-in first; the Claude engine answers with your own token.",
+            false,
+            request.requestId,
+          );
+        }
+        return await this.anthropicClient.complete(request.payload.messages, accessToken);
+      }
 
       case "HOST_CREATE_SESSION": {
         const apiKey = this.keyStore.readApiKey();

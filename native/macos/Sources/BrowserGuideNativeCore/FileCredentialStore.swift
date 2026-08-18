@@ -30,6 +30,10 @@ public protocol CredentialImporting: Sendable {
     /// The stored Claude access token, re-synced from its source when near
     /// expiry. Nil when no Claude sign-in was ever imported.
     func freshAnthropicAccessToken(now: Date) throws -> String?
+    /// Whether an Anthropic credential slot exists in the store at all,
+    /// without any network or freshness work. Powers the health flag that
+    /// selects the Claude engine.
+    func hasAnthropicCredential() -> Bool
 }
 
 /// Harness-style credential storage: one JSON file with 0600 permissions,
@@ -289,6 +293,10 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
             }
         }
         return anthropic["access"] as? String
+    }
+
+    public func hasAnthropicCredential() -> Bool {
+        ((try? loadStore())?["anthropic"] as? [String: Any])?["access"] is String
     }
 
     public func resyncOpenAICredentialFromSource() -> Bool {

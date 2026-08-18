@@ -41,10 +41,12 @@ test("native host exchanges correlated little-endian framed messages without std
     data: {
       ready: true,
       configured: health.data.configured,
+      claude: health.data.claude,
       model: "gpt-realtime",
     },
   });
   assert.equal(typeof health.data.configured, "boolean");
+  assert.equal(typeof health.data.claude, "boolean");
   assert.deepEqual(invalidVersion, {
     version: 1,
     requestId: invalidVersionId,

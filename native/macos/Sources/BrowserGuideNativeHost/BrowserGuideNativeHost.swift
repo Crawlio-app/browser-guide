@@ -87,6 +87,8 @@ struct BrowserGuideNativeHost {
         let importer: (any CredentialImporting)? = useMemoryStore ? nil : fileStore
         let memory: SiteMemoryStore? = useMemoryStore ? nil : SiteMemoryStore()
         let evidence: SharedEvidenceStore? = useMemoryStore ? nil : SharedEvidenceStore()
+        let transcriber: SpeechTranscriber? = useMemoryStore ? nil : SpeechTranscriber()
+        let anthropicClient: AnthropicClient? = useMemoryStore ? nil : AnthropicClient()
         if let rawDelay = environment["BROWSER_GUIDE_TEST_REALTIME_DELAY_MILLISECONDS"],
            let delayMilliseconds = UInt64(rawDelay),
            (1...10_000).contains(delayMilliseconds) {
@@ -98,10 +100,19 @@ struct BrowserGuideNativeHost {
                 realtimeClient: RealtimeClient(
                     transport: DebugDelayedRealtimeTransport(delayMilliseconds: delayMilliseconds),
                     timeoutSeconds: 20
-                )
+                ),
+                transcriber: transcriber,
+                anthropicClient: anthropicClient
             )
         }
-        return BrowserGuideHostService(keyStore: keyStore, importer: importer, memory: memory, evidence: evidence)
+        return BrowserGuideHostService(
+            keyStore: keyStore,
+            importer: importer,
+            memory: memory,
+            evidence: evidence,
+            transcriber: transcriber,
+            anthropicClient: anthropicClient
+        )
         #else
         return BrowserGuideHostService()
         #endif

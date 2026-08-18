@@ -9,6 +9,13 @@ public enum BrowserGuideHostConstants {
     public static let maximumSDPBytes = 512 * 1_024
     public static let maximumAPIKeyBytes = 503
     public static let maximumNativeResponseBytes = 1_024 * 1_024
+    // Sized against the 768 KiB framed-envelope ceiling AFTER base64 inflation:
+    // ~557 KiB of raw 16 kHz mono 16-bit WAV, roughly 17 seconds of speech.
+    public static let maximumTranscribeAudioBase64Chars = 760_000
+    public static let maximumCompletionMessages = 24
+    public static let maximumCompletionBlocks = 8
+    public static let maximumCompletionTextChars = 30_000
+    public static let maximumToolResultChars = 4_000
     public static let unknownRequestID = "00000000-0000-4000-8000-000000000000"
 }
 
@@ -23,6 +30,8 @@ public enum HostRequestType: String, Sendable {
     case memoryClear = "HOST_MEMORY_CLEAR"
     case publishEvidence = "HOST_PUBLISH_EVIDENCE"
     case clearEvidence = "HOST_CLEAR_EVIDENCE"
+    case transcribe = "HOST_TRANSCRIBE"
+    case complete = "HOST_COMPLETE"
 }
 
 public enum RealtimeMode: String, Sendable {
@@ -39,6 +48,8 @@ public enum HostRequestPayload: Sendable, Equatable {
     case memoryAppend(origin: String, question: String, answer: String)
     case memoryClear(origin: String?)
     case publishEvidence(origin: String, title: String, evidence: String)
+    case transcribe(wavData: Data)
+    case complete(messagesData: Data)
 }
 
 public struct HostRequest: Sendable, Equatable {
@@ -187,6 +198,27 @@ public enum HostProtocolCodec {
             }
             return HostRequest(requestID: requestID, type: type, payload: .memoryClear(origin: origin))
 
+        case .transcribe:
+            let payload = try exactPayload(object["payload"], keys: ["audio", "format"], requestID: requestID)
+            guard payload["format"] as? String == "wav",
+                  let encoded = payload["audio"] as? String,
+                  encoded.count <= BrowserGuideHostConstants.maximumTranscribeAudioBase64Chars,
+                  let wavData = Data(base64Encoded: encoded),
+                  wavData.count >= 44,
+                  wavData.prefix(4) == Data("RIFF".utf8) else {
+                throw invalid("The transcription payload is invalid.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .transcribe(wavData: wavData))
+
+        case .complete:
+            let payload = try exactPayload(object["payload"], keys: ["messages"], requestID: requestID)
+            guard let messages = payload["messages"] as? [[String: Any]],
+                  isValidCompletionMessages(messages),
+                  let messagesData = try? JSONSerialization.data(withJSONObject: messages, options: [.sortedKeys]) else {
+                throw invalid("The completion payload is invalid.", requestID: requestID)
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .complete(messagesData: messagesData))
+
         case .createSession:
             let payload = try exactPayload(object["payload"], keys: ["sdp", "mode"], requestID: requestID)
             guard let sdp = payload["sdp"] as? String,
@@ -258,6 +290,42 @@ public enum HostProtocolCodec {
             throw invalid("The native request payload contains missing or unsupported fields.", requestID: requestID)
         }
         return payload
+    }
+
+    /// Bounded Anthropic-style conversation: user/assistant turns whose content
+    /// blocks are text, tool_use, or tool_result with exact keys and size caps.
+    private static func isValidCompletionMessages(_ messages: [[String: Any]]) -> Bool {
+        guard (1...BrowserGuideHostConstants.maximumCompletionMessages).contains(messages.count) else { return false }
+        for message in messages {
+            guard Set(message.keys) == ["role", "content"],
+                  let role = message["role"] as? String, role == "user" || role == "assistant",
+                  let content = message["content"] as? [[String: Any]],
+                  (1...BrowserGuideHostConstants.maximumCompletionBlocks).contains(content.count) else { return false }
+            for block in content {
+                switch block["type"] as? String {
+                case "text":
+                    guard Set(block.keys) == ["type", "text"],
+                          let text = block["text"] as? String,
+                          !text.isEmpty,
+                          text.count <= BrowserGuideHostConstants.maximumCompletionTextChars else { return false }
+                case "tool_use":
+                    guard Set(block.keys) == ["type", "id", "name", "input"],
+                          let id = block["id"] as? String, !id.isEmpty, id.count <= 200,
+                          let name = block["name"] as? String,
+                          name == "show_guidance" || name == "clear_guidance",
+                          let input = block["input"] as? [String: Any],
+                          JSONSerialization.isValidJSONObject(input) else { return false }
+                case "tool_result":
+                    guard Set(block.keys) == ["type", "tool_use_id", "content"],
+                          let toolUseId = block["tool_use_id"] as? String, !toolUseId.isEmpty, toolUseId.count <= 200,
+                          let resultContent = block["content"] as? String,
+                          resultContent.count <= BrowserGuideHostConstants.maximumToolResultChars else { return false }
+                default:
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     private static func isWebOrigin(_ value: String) -> Bool {
