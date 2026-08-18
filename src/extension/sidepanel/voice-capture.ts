@@ -1,34 +1,45 @@
 /**
- * Microphone capture for the recorder UI and for the Claude engine.
+ * Microphone capture for the recording bar and for the Claude engine.
  *
- * Both engines need to show the user that their voice is being heard, so the
- * level meter is always available. Only the Claude engine needs the audio
- * itself, so PCM accumulation is opt-in: with Realtime, WebRTC already carries
- * the microphone and recording it twice would be waste.
+ * The waveform follows the same recipe Codex uses: rectify and noise-gate the
+ * raw samples, average them into one bar per four CSS pixels, normalise with a
+ * gamma curve so ordinary speech fills the strip, and paint mirrored bars whose
+ * colour is inherited from the canvas's CSS `color`. Both engines show it, so
+ * a flat strip always means the microphone, never the visualisation.
+ *
+ * Only the Claude engine needs the audio itself; with Realtime, WebRTC already
+ * carries the microphone and recording it twice would be waste.
  */
 
 /** Target rate for on-device speech recognition; also what the WAV declares. */
 export const CAPTURE_SAMPLE_RATE = 16_000;
-/** Bars in the level meter. Kept in the module so the UI and the smoothing
- *  window cannot drift apart. */
-export const LEVEL_BAR_COUNT = 28;
+/** Silence floor: below this a bar is drawn at its baseline. */
+const NOISE_FLOOR = 0.0025;
+/** Normalisation window and curve. */
+const LEVEL_FLOOR = 0.006;
+const LEVEL_CEILING = 0.16;
+const LEVEL_GAMMA = 0.6;
+/** Seconds of history the strip holds. */
+const BUFFER_SECONDS = 10;
+/** One bar per this many CSS pixels. */
+const PIXELS_PER_BAR = 4;
 
 export interface VoiceCapture {
-  /** Newest first: a normalized 0..1 level per bar, oldest sample last. */
-  levels(): readonly number[];
   elapsedMs(): number;
   /** Stops the capture. Returns WAV bytes when PCM was requested. */
   stop(): Promise<Uint8Array | null>;
-  /** Stops and discards everything, including the microphone tracks. */
+  /** Stops and discards everything. */
   cancel(): void;
 }
 
 export interface VoiceCaptureOptions {
   /** Accumulate PCM so the utterance can be transcribed by the helper. */
   recordPcm?: boolean;
-  /** Called when the level history changes, so the UI can repaint. */
-  onLevel?: (levels: readonly number[]) => void;
-  /** Stop tracks on cancel/stop. False when another owner holds the stream. */
+  /** Canvas the waveform paints into. */
+  canvas?: HTMLCanvasElement | null;
+  /** Called once per whole second, so the timer does not re-render at 60fps. */
+  onSecond?: (elapsedMs: number) => void;
+  /** Stop the stream's tracks on teardown. */
   ownsStream?: boolean;
 }
 
@@ -36,87 +47,145 @@ export async function startVoiceCapture(
   stream: MediaStream,
   options: VoiceCaptureOptions = {},
 ): Promise<VoiceCapture> {
-  const { recordPcm = false, onLevel, ownsStream = false } = options;
+  const { recordPcm = false, canvas = null, onSecond, ownsStream = false } = options;
   const context = new AudioContext({ sampleRate: CAPTURE_SAMPLE_RATE });
   if (context.state === "suspended") await context.resume();
   const source = context.createMediaStreamSource(stream);
-  const analyser = context.createAnalyser();
-  analyser.fftSize = 1_024;
-  analyser.smoothingTimeConstant = 0.6;
-  source.connect(analyser);
+  await context.audioWorklet.addModule(chrome.runtime.getURL("audio-processor.js"));
+  const worklet = new AudioWorkletNode(context, "browser-guide-recorder", {
+    numberOfInputs: 1,
+    numberOfOutputs: 0,
+    channelCount: 1,
+  });
+  source.connect(worklet);
 
-  const chunks: Float32Array[] = [];
-  let recordedSamples = 0;
-  let worklet: AudioWorkletNode | null = null;
-  if (recordPcm) {
-    await context.audioWorklet.addModule(chrome.runtime.getURL("audio-processor.js"));
-    worklet = new AudioWorkletNode(context, "browser-guide-recorder", {
-      numberOfInputs: 1,
-      numberOfOutputs: 0,
-      channelCount: 1,
-    });
-    worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
-      chunks.push(event.data);
-      recordedSamples += event.data.length;
-    };
-    source.connect(worklet);
-  }
-
+  const pcm: Float32Array[] = [];
+  let pcmSamples = 0;
+  const bars: number[] = [];
+  let pending = new Float32Array(0);
+  let barCount = 0;
+  let samplesPerBar = Math.max(1, Math.floor(context.sampleRate * BUFFER_SECONDS / 64));
   const startedAt = performance.now();
-  const levels: number[] = new Array<number>(LEVEL_BAR_COUNT).fill(0);
-  const sampleBuffer = new Uint8Array(analyser.fftSize);
-  let frame: number | null = null;
+  let lastWholeSecond = -1;
   let closed = false;
 
-  const readLevel = (): number => {
-    analyser.getByteTimeDomainData(sampleBuffer);
-    let sum = 0;
-    for (const sample of sampleBuffer) {
-      const centered = (sample - 128) / 128;
-      sum += centered * centered;
+  const measureBars = (): void => {
+    if (!canvas) return;
+    const width = canvas.clientWidth;
+    if (width <= 0) return;
+    const next = Math.max(1, Math.floor(width / PIXELS_PER_BAR));
+    if (next === barCount) return;
+    barCount = next;
+    samplesPerBar = Math.max(1, Math.floor(context.sampleRate * BUFFER_SECONDS / barCount));
+    while (bars.length > barCount) bars.shift();
+  };
+
+  const draw = (): void => {
+    if (!canvas) return;
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.floor(canvas.clientWidth * ratio);
+    const height = Math.floor(canvas.clientHeight * ratio);
+    if (width <= 0 || height <= 0) return;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
     }
-    const rms = Math.sqrt(sum / sampleBuffer.length);
-    // Speech sits low in a linear RMS scale; this curve lifts normal talking
-    // into the visible range without pinning loud syllables at the ceiling.
-    return Math.min(1, Math.sqrt(rms * 3.2));
+    const paint = canvas.getContext("2d");
+    if (!paint) return;
+    paint.setTransform(1, 0, 0, 1, 0, 0);
+    paint.clearRect(0, 0, width, height);
+    paint.save();
+    const middle = height / 2;
+    paint.translate(0, middle);
+    paint.fillStyle = window.getComputedStyle(canvas).color || "#000";
+    const slot = width / Math.max(1, barCount);
+    let firstHeard = -1;
+    for (let index = 0; index < bars.length; index += 1) {
+      if ((bars[index] ?? 0) > NOISE_FLOOR) {
+        firstHeard = index;
+        break;
+      }
+    }
+    for (let index = 0; index < bars.length; index += 1) {
+      const level = (bars[index] ?? 0) * 10;
+      const half = Math.max(ratio * 0.5, level * middle);
+      // The strip fills left to right: everything before the first sound the
+      // microphone actually heard stays dim.
+      paint.globalAlpha = firstHeard === -1 || index < firstHeard ? 0.35 : 1;
+      paint.fillRect(index * slot, -half, slot / 2, half * 2);
+    }
+    paint.restore();
   };
 
-  const tick = () => {
+  const normalize = (rms: number): number => {
+    const above = Math.max(0, rms - LEVEL_FLOOR);
+    return Math.min(1, above / (LEVEL_CEILING - LEVEL_FLOOR)) ** LEVEL_GAMMA;
+  };
+
+  worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
     if (closed) return;
-    levels.shift();
-    levels.push(readLevel());
-    onLevel?.(levels);
-    frame = requestAnimationFrame(tick);
-  };
-  frame = requestAnimationFrame(tick);
+    const samples = event.data;
+    if (recordPcm) {
+      pcm.push(samples.slice());
+      pcmSamples += samples.length;
+    }
+    measureBars();
 
-  const teardown = () => {
+    // Rectify and gate in place, then average into bars.
+    let sum = 0;
+    const rectified = new Float32Array(samples.length);
+    for (let index = 0; index < samples.length; index += 1) {
+      const magnitude = Math.abs(samples[index] ?? 0);
+      sum += magnitude * magnitude;
+      rectified[index] = magnitude < NOISE_FLOOR ? NOISE_FLOOR : magnitude;
+    }
+    const merged = new Float32Array(pending.length + rectified.length);
+    merged.set(pending, 0);
+    merged.set(rectified, pending.length);
+    let offset = 0;
+    while (offset + samplesPerBar <= merged.length) {
+      let barSum = 0;
+      for (let index = offset; index < offset + samplesPerBar; index += 1) barSum += merged[index] ?? 0;
+      bars.push(normalize(barSum / samplesPerBar));
+      if (bars.length > barCount) bars.shift();
+      offset += samplesPerBar;
+    }
+    pending = merged.slice(offset);
+    draw();
+
+    const elapsed = performance.now() - startedAt;
+    const whole = Math.floor(elapsed / 1_000);
+    if (whole !== lastWholeSecond) {
+      lastWholeSecond = whole;
+      onSecond?.(whole * 1_000);
+    }
+  };
+
+  const teardown = (): void => {
     if (closed) return;
     closed = true;
-    if (frame !== null) cancelAnimationFrame(frame);
-    frame = null;
-    if (worklet) {
-      worklet.port.onmessage = null;
-      worklet.disconnect();
-    }
+    worklet.port.onmessage = null;
+    worklet.disconnect();
     source.disconnect();
-    analyser.disconnect();
     void context.close().catch(() => undefined);
+    if (canvas) {
+      const paint = canvas.getContext("2d");
+      paint?.clearRect(0, 0, canvas.width, canvas.height);
+    }
     if (ownsStream) for (const track of stream.getTracks()) track.stop();
   };
 
   return {
-    levels: () => levels,
     elapsedMs: () => performance.now() - startedAt,
     async stop() {
       const sampleRate = context.sampleRate;
       teardown();
-      if (!recordPcm || recordedSamples === 0) return null;
-      return encodeWav(chunks, recordedSamples, sampleRate);
+      if (!recordPcm || pcmSamples === 0) return null;
+      return encodeWav(pcm, pcmSamples, sampleRate);
     },
     cancel() {
-      chunks.length = 0;
-      recordedSamples = 0;
+      pcm.length = 0;
+      pcmSamples = 0;
       teardown();
     },
   };
@@ -154,8 +223,9 @@ export function encodeWav(chunks: readonly Float32Array[], sampleCount: number, 
   return bytes;
 }
 
+/** M:SS, the way a recording timer reads. */
 export function formatElapsed(elapsedMs: number): string {
-  const totalSeconds = Math.floor(elapsedMs / 1_000);
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1_000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;

@@ -177,14 +177,17 @@ describe.skipIf(!existsSync(chromiumPath))("controlled full product flow", () =>
 
     // Agent eyes consent: OFF by default, no indicator until the user opts in,
     // and turning it off again removes the visible indicator.
-    await expect.poll(() => sidePanelPage?.locator(".eyes-toggle input").isChecked()).toBe(false);
+    await expect.poll(
+      () => sidePanelPage?.locator(".eyes-toggle").getAttribute("aria-pressed"),
+      { timeout: 5_000 },
+    ).toBe("false");
     expect(await sidePanelPage.locator(".eyes-indicator").count()).toBe(0);
-    await sidePanelPage.locator(".eyes-toggle input").evaluate((element) => {
-      (element as HTMLInputElement).click();
+    await sidePanelPage.locator(".eyes-toggle").evaluate((element) => {
+      (element as HTMLButtonElement).click();
     });
     await expect.poll(() => sidePanelPage?.locator(".eyes-indicator").count(), { timeout: 5_000 }).toBe(1);
-    await sidePanelPage.locator(".eyes-toggle input").evaluate((element) => {
-      (element as HTMLInputElement).click();
+    await sidePanelPage.locator(".eyes-toggle").evaluate((element) => {
+      (element as HTMLButtonElement).click();
     });
     await expect.poll(() => sidePanelPage?.locator(".eyes-indicator").count(), { timeout: 5_000 }).toBe(0);
 

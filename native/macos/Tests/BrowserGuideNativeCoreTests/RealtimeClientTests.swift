@@ -63,7 +63,11 @@ final class RealtimeClientTests: XCTestCase {
         let audio = try XCTUnwrap(session["audio"] as? [String: Any])
         let audioInput = try XCTUnwrap(audio["input"] as? [String: Any])
         let turnDetection = try XCTUnwrap(audioInput["turn_detection"] as? [String: Any])
-        XCTAssertEqual(turnDetection["create_response"] as? Bool, true)
+        // The user's press ends a turn, never the server: eagerness stays low
+        // so a thinking pause cannot close a question, and the panel is the
+        // only thing that asks for a response.
+        XCTAssertEqual(turnDetection["eagerness"] as? String, "low")
+        XCTAssertEqual(turnDetection["create_response"] as? Bool, false)
         XCTAssertEqual(turnDetection["interrupt_response"] as? Bool, false)
         let instructions = try XCTUnwrap(session["instructions"] as? String)
         XCTAssertTrue(instructions.contains("read-only guide"))

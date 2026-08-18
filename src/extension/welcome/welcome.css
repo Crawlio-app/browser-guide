@@ -1,18 +1,18 @@
-/* Browser Guide onboarding - adapted from the Crawlio connect card pattern.
-   Same skeleton (light centered card, stepper, trust modal); differentiated
-   by the #5B9EFF family accent, the compass mascot, and Browser Guide copy. */
+/* Browser Guide onboarding. Same token values as the side panel and the
+   on-page overlay: one light surface, near-black for interactive weight, and
+   the Crawlio mark as the only colour. */
 :root {
-  --bg-100: #fff;
-  --bg-200: #f8f8fa;
-  --text-100: rgba(0, 0, 0, 0.87);
-  --text-200: rgba(0, 0, 0, 0.55);
-  --text-300: rgba(0, 0, 0, 0.32);
-  --border-100: rgba(0, 0, 0, 0.06);
-  --border-200: rgba(0, 0, 0, 0.1);
-  --accent: #5b9eff;
-  --accent-hover: #3e7edb;
-  --accent-light: rgba(91, 158, 255, 0.1);
-  --green: #22c55e;
+  --bg-100: #ffffff;
+  --bg-200: #f7f7f8;
+  --text-100: #101012;
+  --text-200: #35353a;
+  --text-300: #6b6b74;
+  --border-100: #ededf0;
+  --border-200: #e0e0e4;
+  --accent: #101012;
+  --accent-hover: #2c2c31;
+  --accent-light: rgba(16, 16, 18, 0.06);
+  --green: #1f9d4d;
   --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -32,7 +32,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 40px 24px;
-  background: #fafbfc;
+  background: var(--bg-100);
   color: var(--text-100);
   font-family: var(--font);
   -webkit-font-smoothing: antialiased;
@@ -184,11 +184,11 @@ h1 {
   justify-content: center;
   gap: 8px;
   border: none;
-  border-radius: 10px;
-  padding: 12px 24px;
+  border-radius: 9999px;
+  padding: 13px 24px;
   cursor: pointer;
   font-family: var(--font);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   transition: all 0.15s;
 }
@@ -227,7 +227,7 @@ h1 {
 .status-line {
   min-height: 18px;
   margin-bottom: 12px;
-  color: #b91c1c;
+  color: #c4362f;
   font-size: 12.5px;
   line-height: 1.5;
   text-align: left;
@@ -347,7 +347,7 @@ h1 {
 .permission-status {
   min-height: 18px;
   margin: -12px 0 12px;
-  color: #b91c1c;
+  color: #c4362f;
   font-size: 12px;
 }
 

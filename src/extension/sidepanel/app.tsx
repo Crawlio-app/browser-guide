@@ -29,7 +29,7 @@ import {
 import { WalkthroughCoordinator } from "../../shared/walkthrough.js";
 import { DEMO_TOUR_GOAL, isPracticePage, resolveDemoStep } from "./demo-tour.js";
 import { MAX_RECORDING_MS, SessionBrokerError, VoiceSession, type GuideUiState, type RealtimeMode, type SessionBroker, type VoiceErrorKind } from "./voice-session.js";
-import { LEVEL_BAR_COUNT, formatElapsed, startVoiceCapture, type VoiceCapture } from "./voice-capture.js";
+import { formatElapsed, startVoiceCapture, type VoiceCapture } from "./voice-capture.js";
 
 type SetupState = "booting" | "helper-missing" | "permission-needed" | "key-missing" | "demo" | "ready";
 type ToolbarState = "Ready" | "Guiding" | "Listening" | "Paused" | "Unavailable";
@@ -110,7 +110,6 @@ function BrowserGuideApp(): React.ReactElement {
   const [speakAnswers, setSpeakAnswers] = useState(false);
   const [agentEyes, setAgentEyes] = useState(false);
   const [demoActive, setDemoActive] = useState(false);
-  const [levels, setLevels] = useState<readonly number[]>(() => new Array<number>(LEVEL_BAR_COUNT).fill(0));
   const [recordingMs, setRecordingMs] = useState(0);
   const demoStateRef = useRef<{ stepIndex: number } | null>(null);
   const [keyPresent, setKeyPresent] = useState(false);
@@ -136,7 +135,7 @@ function BrowserGuideApp(): React.ReactElement {
   const speakAnswersRef = useRef(false);
   const voiceStateRef = useRef<GuideUiState>("idle");
   const captureRef = useRef<VoiceCapture | null>(null);
-  const recordingTickRef = useRef<number | null>(null);
+  const waveformRef = useRef<HTMLCanvasElement | null>(null);
   const transientKeyInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -491,13 +490,8 @@ function BrowserGuideApp(): React.ReactElement {
   }, [session]);
 
   const endCapture = useCallback((discard: boolean) => {
-    if (recordingTickRef.current !== null) {
-      window.clearInterval(recordingTickRef.current);
-      recordingTickRef.current = null;
-    }
     const capture = captureRef.current;
     captureRef.current = null;
-    setLevels(new Array<number>(LEVEL_BAR_COUNT).fill(0));
     setRecordingMs(0);
     if (!capture) return;
     if (discard) capture.cancel();
@@ -507,18 +501,17 @@ function BrowserGuideApp(): React.ReactElement {
   const beginCapture = useCallback(async () => {
     const stream = session.microphoneStream;
     if (!stream) return;
-    try {
-      // The meter reads the same stream the model hears, so a flat bar always
-      // means the microphone, not the visualisation.
-      captureRef.current = await startVoiceCapture(stream, { onLevel: (next) => setLevels([...next]) });
-    } catch {
-      // A missing AudioContext only costs the meter, never the recording.
-      return;
-    }
     setRecordingMs(0);
-    recordingTickRef.current = window.setInterval(() => {
-      setRecordingMs(captureRef.current?.elapsedMs() ?? 0);
-    }, 200);
+    try {
+      // The waveform reads the same stream the model hears, so a flat strip
+      // always means the microphone, not the visualisation.
+      captureRef.current = await startVoiceCapture(stream, {
+        canvas: waveformRef.current,
+        onSecond: setRecordingMs,
+      });
+    } catch {
+      // A missing AudioContext only costs the waveform, never the recording.
+    }
   }, [session]);
 
   const sendRecording = useCallback(() => {
@@ -530,6 +523,8 @@ function BrowserGuideApp(): React.ReactElement {
     endCapture(true);
     session.cancelListening();
   }, [endCapture, session]);
+  const cancelRecordingRef = useRef(cancelRecording);
+  cancelRecordingRef.current = cancelRecording;
 
   const openMicrophoneGuide = useCallback(() => {
     window.open(chrome.runtime.getURL("welcome.html#microphone"));
@@ -659,6 +654,13 @@ function BrowserGuideApp(): React.ReactElement {
       if (session.busy || voiceStateRef.current === "speaking") return;
       void session.close();
     };
+    const escapeListener = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || voiceStateRef.current !== "listening") return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelRecordingRef.current();
+    };
+    document.addEventListener("keydown", escapeListener, true);
     document.addEventListener("visibilitychange", visibilityListener);
     return () => {
       mounted = false;
@@ -667,6 +669,7 @@ function BrowserGuideApp(): React.ReactElement {
       if (walkthroughDeadlineTimer.current !== null) window.clearTimeout(walkthroughDeadlineTimer.current);
       turnEntryIds.current.clear();
       chrome.runtime.onMessage.removeListener(listener);
+      document.removeEventListener("keydown", escapeListener, true);
       document.removeEventListener("visibilitychange", visibilityListener);
       stopSpeaking();
       void session.close();
@@ -724,7 +727,7 @@ function BrowserGuideApp(): React.ReactElement {
       } else {
         setIssue({
           kind: "key",
-          message: "Claude Code connected. Realtime voice still needs an OpenAI credential — use the Codex sign-in or paste a key.",
+          message: "Claude Code connected. Realtime voice still needs an OpenAI credential: use the Codex sign-in or paste a key.",
         });
       }
     } catch (error) {
@@ -910,7 +913,7 @@ function BrowserGuideApp(): React.ReactElement {
       const context = await capturePage();
       if (!isPracticePage(context)) {
         window.open(PRACTICE_URL);
-        setIssue({ kind: "page", message: "The tour runs on the practice page — it just opened. Click the toolbar icon there, then press Practice tour again." });
+        setIssue({ kind: "page", message: "The tour runs on the practice page, which just opened. Click the toolbar icon there, then press Practice tour again." });
         return;
       }
       demoStateRef.current = { stepIndex: 0 };
@@ -1074,7 +1077,7 @@ function BrowserGuideApp(): React.ReactElement {
       <div className="workspace" ref={workspaceRef}>
         {inDemo && (
           <section className="recovery-line demo-banner" role="status">
-            <span>Demo mode — real questions need the local helper.</span>
+            <span>Demo mode. Real questions need the local helper.</span>
             <button type="button" onClick={() => void startDemoTour()}>Practice tour</button>
             <button type="button" onClick={() => {
               setSetup("booting");
@@ -1127,7 +1130,7 @@ function BrowserGuideApp(): React.ReactElement {
         <section className="conversation" aria-label="Conversation">
           {entries.length === 0 && !walkthrough && (
             <div className="empty-instrument">
-              <span className="empty-beacon" aria-hidden="true"><i /></span>
+              <CrawlioMark className="brand-mark empty-mark" />
               <h1>Ask about this page</h1>
               <div className="intent-launcher" aria-label="Guide modes">
                 {(["ask", "find", "walkthrough"] as const).map((value) => (
@@ -1166,7 +1169,7 @@ function BrowserGuideApp(): React.ReactElement {
                 </span>
                 <span className="user-question-text">{entry.question || "Listening…"}</span>
               </p>
-              {entry.answer && <p className={`guide-answer${entry.answer.length > 180 ? " long" : ""}`}>{entry.answer}</p>}
+              {entry.answer && <p className="guide-answer">{entry.answer}</p>}
               {entry.status === "pending" && !entry.answer && <span className="thinking-mark" aria-label="Thinking"><i /><i /><i /></span>}
               {entry.status === "failed" && (
                 <div className="turn-failure">
@@ -1209,18 +1212,36 @@ function BrowserGuideApp(): React.ReactElement {
             </svg>
             <span>Speak</span>
           </button>
-          <label className="visual-toggle">
-            <input type="checkbox" checked={shareVisual} onChange={(event) => setShareVisual(event.currentTarget.checked)} />
+          <button
+            type="button"
+            className={`chip-toggle visual-toggle${shareVisual ? " on" : ""}`}
+            aria-pressed={shareVisual}
+            title="Include a screenshot with the page evidence. Omitted whenever sensitive content is visible."
+            onClick={() => setShareVisual((current) => !current)}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <rect x="2.6" y="4.6" width="14.8" height="11" rx="2.4" />
+              <circle cx="10" cy="10.1" r="2.9" />
+            </svg>
             <span>Visual</span>
-          </label>
-          <label className="visual-toggle eyes-toggle" title="Share the current page snapshot with local coding agents (Claude Code, Codex) through a private local file. Off deletes it.">
-            <input type="checkbox" checked={agentEyes} onChange={toggleAgentEyes} />
+          </button>
+          <button
+            type="button"
+            className={`chip-toggle eyes-toggle${agentEyes ? " on" : ""}`}
+            aria-pressed={agentEyes}
+            title="Share the current page snapshot with local coding agents (Claude Code, Codex) through a private local file. Off deletes it."
+            onClick={toggleAgentEyes}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M1.8 10S4.8 4.8 10 4.8 18.2 10 18.2 10 15.2 15.2 10 15.2 1.8 10 1.8 10Z" />
+              <circle cx="10" cy="10" r="2.5" />
+            </svg>
             <span>Eyes</span>
-          </label>
+          </button>
         </div>
         {isRecording ? (
           <RecordingBar
-            levels={levels}
+            canvasRef={waveformRef}
             elapsedMs={recordingMs}
             onCancel={cancelRecording}
             onSend={sendRecording}
@@ -1238,7 +1259,10 @@ function BrowserGuideApp(): React.ReactElement {
             disabled={composerLocked || voiceState === "thinking" || voiceState === "speaking" || voiceState === "pointing"}
             onClick={() => void toggleListening()}
           >
-            <span aria-hidden="true"><i /><i /><i /></span>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <rect x="7.4" y="2.6" width="5.2" height="9.2" rx="2.6" />
+              <path d="M4.8 9.4a5.2 5.2 0 0 0 10.4 0M10 14.6v2.8" />
+            </svg>
           </button>
           <label className="sr-only" htmlFor="guide-question">{PLACEHOLDERS[mode]}</label>
           <textarea
@@ -1303,8 +1327,22 @@ function InstallCommandRow(): React.ReactElement {
   );
 }
 
+function CrawlioMark({ className }: { className?: string }): React.ReactElement {
+  return (
+    <svg className={className} viewBox="0 0 324 250" role="img" aria-label="Crawlio">
+      <path d="M67.5441 55.8643C47.4515 61.2723 32.6209 46.2677 17 61.8887C1.379 77.5097 10.5521 93.6713 10.9755 112.433L130.415 234.573C142.709 246.867 161.65 237.78 177.271 222.159C192.892 206.539 195.589 183.909 183.295 171.615L67.5441 55.8643Z" fill="#FF5524" />
+      <path d="M201.527 39.882C201.527 20.801 189.396 1.1473 161.18 0C141.632 0 123.896 13.6579 121.527 39.3971L120.818 199.161C120.752 214.037 124.964 229.255 136.849 238.2C143.761 243.402 152.354 247.851 161.527 247.851C177.231 247.851 185.084 240.612 192.391 229.162C198.846 219.046 201.527 206.998 201.527 194.998V39.882Z" fill="#8337FF" />
+      <path d="M310.364 116.84C323.541 103.664 325.88 79.6389 308.354 62.1132C292.78 46.5387 268.037 46.0305 254.861 59.2068L132.235 181.832C119.059 195.008 121.003 218.316 136.578 233.89C152.152 249.465 175.459 251.409 188.636 238.232L310.364 116.84Z" fill="#2EB6FF" />
+      <path d="M161.527 249.248C183.918 249.248 202.069 231.097 202.069 208.706C202.069 186.315 183.918 168.163 161.527 168.163C139.136 168.163 120.984 186.315 120.984 208.706C120.984 231.097 139.136 249.248 161.527 249.248Z" fill="#ABFF50" />
+      <path d="M161.527 80C183.619 80 201.527 62.0914 201.527 40C201.527 17.9086 183.619 0 161.527 0C139.436 0 121.527 17.9086 121.527 40C121.527 62.0914 139.436 80 161.527 80Z" fill="#9C60FF" />
+      <path d="M283.283 127.292C305.375 127.292 323.283 109.383 323.283 87.292C323.283 65.2006 305.375 47.292 283.283 47.292C261.192 47.292 243.283 65.2006 243.283 87.292C243.283 109.383 261.192 127.292 283.283 127.292Z" fill="#58C5FF" />
+      <path d="M40 124.893C62.0914 124.893 80 106.984 80 84.8926C80 62.8012 62.0914 44.8926 40 44.8926C17.9086 44.8926 0 62.8012 0 84.8926C0 106.984 17.9086 124.893 40 124.893Z" fill="#FF7750" />
+    </svg>
+  );
+}
+
 function RecordingBar(props: {
-  levels: readonly number[];
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
   elapsedMs: number;
   onCancel(): void;
   onSend(): void;
@@ -1313,21 +1351,17 @@ function RecordingBar(props: {
   const endingSoon = remainingMs <= 10_000;
   return (
     <div className="recorder" role="group" aria-label="Recording">
-      <p className="sr-only" role="status">Recording. Press send when you finish speaking.</p>
+      <p className="sr-only" role="status">Recording. Press send when you finish speaking, or Escape to discard.</p>
       <button
         type="button"
         className="recorder-cancel"
         onClick={props.onCancel}
         aria-label="Discard recording"
-        title="Discard"
+        title="Discard (Esc)"
       >
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
       </button>
-      <div className="recorder-wave" aria-hidden="true">
-        {props.levels.map((level, index) => (
-          <i key={index} style={{ transform: `scaleY(${Math.max(0.08, level).toFixed(3)})` }} />
-        ))}
-      </div>
+      <canvas className="recorder-wave" ref={props.canvasRef} aria-hidden="true" />
       <span className={`recorder-time${endingSoon ? " ending" : ""}`}>
         {endingSoon ? `-${formatElapsed(remainingMs)}` : formatElapsed(props.elapsedMs)}
       </span>
@@ -1348,7 +1382,7 @@ function SetupView(props: SetupViewProps): React.ReactElement {
   const copy = setupCopy(props.state);
   return (
     <section className="setup-card" aria-labelledby="setup-title" aria-busy={props.state === "booting" || props.keyBusy}>
-      <span className="setup-beacon" aria-hidden="true"><i /></span>
+      <CrawlioMark className="brand-mark setup-mark" />
       <p className="setup-kicker">{copy.kicker}</p>
       <h1 id="setup-title">{copy.title}</h1>
       <p className="setup-line">{copy.line}</p>
@@ -1407,6 +1441,30 @@ function walkthroughEyebrow(walkthrough: WalkthroughSession): string {
 
 
 function ModeIcon({ mode }: { mode: GuideMode }): React.ReactElement {
+  if (mode === "ask") {
+    return (
+      <svg className="mode-glyph" viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M16.6 12.2a1.9 1.9 0 0 1-1.9 1.9H6.9L3.4 17V5.7a1.9 1.9 0 0 1 1.9-1.9h9.4a1.9 1.9 0 0 1 1.9 1.9Z" />
+      </svg>
+    );
+  }
+  if (mode === "find") {
+    return (
+      <svg className="mode-glyph" viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="9" cy="9" r="5.2" />
+        <path d="M12.9 12.9 17 17" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="mode-glyph" viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M4 15.4h3.2M4 10h6.4M4 4.6h9.6" />
+      <circle cx="15.6" cy="15.4" r="1.5" />
+    </svg>
+  );
+}
+
+function LegacyModeIcon({ mode }: { mode: GuideMode }): React.ReactElement {
   if (mode === "ask") return <span className="mode-icon" aria-hidden="true">?</span>;
   if (mode === "find") return <span className="mode-icon lens" aria-hidden="true" />;
   return <span className="mode-icon steps" aria-hidden="true"><i /><i /></span>;
