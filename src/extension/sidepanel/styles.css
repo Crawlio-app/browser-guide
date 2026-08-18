@@ -383,6 +383,12 @@ input:disabled {
   animation: breathe 1.8s ease-in-out infinite;
 }
 
+[data-toolbar-state="not-shared"] .beacon-dot,
+[data-toolbar-state="demo"] .beacon-dot {
+  background: var(--text-dim);
+  box-shadow: none;
+}
+
 [data-toolbar-state="paused"] .beacon-dot {
   background: var(--warn);
   box-shadow: 0 0 0 4px rgba(178, 107, 0, 0.16);
@@ -460,6 +466,9 @@ input:disabled {
 
 .recovery-line,
 .issue-line {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -672,6 +681,11 @@ input:disabled {
   width: min(100%, 340px);
   grid-template-columns: 1fr;
   gap: 7px;
+}
+
+.intent-launcher button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .intent-launcher button {

@@ -115,7 +115,9 @@ describe.skipIf(!existsSync(chromiumPath))("controlled full product flow", () =>
       const hostLog = await readFile(hostLogPath, "utf8").catch(() => "native host was never launched");
       throw new Error(`The controlled product did not reach ready (setup=${state ?? "none"}): ${copy}; host=${hostLog.trim()}`);
     }
-    if (await sidePanelPage.locator(".empty-instrument h1").innerText() !== "Ask about this page") {
+    // Assert the surface, not its copy: the headline changes with whether the
+    // tab has been shared yet, which at this point it has not.
+    if (await sidePanelPage.locator(".intent-launcher button").count() !== 3) {
       throw new Error("The ready product surface did not render.");
     }
 

@@ -32,7 +32,7 @@ import { MAX_RECORDING_MS, SessionBrokerError, VoiceSession, type GuideUiState, 
 import { formatElapsed, startVoiceCapture, type VoiceCapture } from "./voice-capture.js";
 
 type SetupState = "booting" | "helper-missing" | "permission-needed" | "key-missing" | "demo" | "ready";
-type ToolbarState = "Ready" | "Guiding" | "Listening" | "Paused" | "Unavailable";
+type ToolbarState = "Ready" | "Guiding" | "Listening" | "Paused" | "Not shared" | "Demo" | "Unavailable";
 
 interface ConversationEntry {
   id: string;
@@ -643,6 +643,17 @@ function BrowserGuideApp(): React.ReactElement {
     chrome.runtime.onMessage.addListener(listener);
 
     const visibilityListener = () => {
+      if (document.visibilityState === "visible") {
+        // Silent: it either restores a grant we still hold or leaves the
+        // banner exactly as it was.
+        if (runtimeRef.current.status === "permission-paused"
+          && runtimeRef.current.pauseReason !== "restricted-page") {
+          void runtimeSend<unknown>({ type: "GUIDE_RESUME_REQUEST" }).then((response) => {
+            if (isRecord(response) && isExtensionRuntimeState(response.state)) setRuntime(response.state);
+          }).catch(() => undefined);
+        }
+        return;
+      }
       if (document.visibilityState !== "hidden") return;
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
       refreshTimer.current = null;
@@ -1014,21 +1025,27 @@ function BrowserGuideApp(): React.ReactElement {
     setSetup("key-missing");
   }, [clearConversation]);
 
-  // Keep the newest exchange in view as answers stream in.
+  // Keep the newest exchange in view as answers stream in. With nothing to
+  // follow there is nothing to scroll to, and scrolling anyway pushed the
+  // banner that explains a paused tab out of sight.
   useEffect(() => {
     const workspace = workspaceRef.current;
-    if (workspace) workspace.scrollTop = workspace.scrollHeight;
+    if (workspace && entries.length > 0) workspace.scrollTop = workspace.scrollHeight;
   }, [entries, walkthrough]);
 
   const toolbarState: ToolbarState = setup === "demo"
-    ? (demoActive && walkthrough?.phase !== "paused" ? "Guiding" : "Paused")
+    ? (demoActive && walkthrough?.phase !== "paused" ? "Guiding" : "Demo")
     : setup !== "ready"
       ? "Unavailable"
-      : walkthrough?.phase === "paused" || runtime.status === "permission-paused"
-        ? "Paused"
+      // A tab that was never shared is not a paused session: naming it that
+      // way is the whole reason "why is it paused?" has no answer on screen.
+      : runtime.status === "permission-paused"
+        ? "Not shared"
+        : walkthrough?.phase === "paused"
+          ? "Paused"
           : walkthrough && walkthrough.phase !== "complete" ? "Guiding"
-          : voiceState === "listening" ? "Listening"
-            : voiceState === "offline" ? "Unavailable" : "Ready";
+            : voiceState === "listening" ? "Listening"
+              : voiceState === "offline" ? "Unavailable" : "Ready";
 
   if (setup !== "ready" && setup !== "demo") {
     return (
@@ -1058,7 +1075,7 @@ function BrowserGuideApp(): React.ReactElement {
   const inDemo = setup === "demo";
   const composerLocked = pagePaused || inDemo || demoActive;
   return (
-    <main className="guide-shell" data-toolbar-state={toolbarState.toLowerCase()}>
+    <main className="guide-shell" data-toolbar-state={toolbarState.toLowerCase().replace(" ", "-")}>
       <p className="sr-only" aria-live="polite" aria-atomic="true">{liveAnnouncement}</p>
       <header className="instrument-bar">
         <div className="instrument-state" title={pageTitle ?? "Current tab"}>
@@ -1131,10 +1148,10 @@ function BrowserGuideApp(): React.ReactElement {
           {entries.length === 0 && !walkthrough && (
             <div className="empty-instrument">
               <CrawlioMark className="brand-mark empty-mark" />
-              <h1>Ask about this page</h1>
+              <h1>{pagePaused ? "Share this tab to begin" : "Ask about this page"}</h1>
               <div className="intent-launcher" aria-label="Guide modes">
                 {(["ask", "find", "walkthrough"] as const).map((value) => (
-                  <button key={value} type="button" disabled={inDemo} onClick={() => {
+                  <button key={value} type="button" disabled={inDemo || pagePaused} onClick={() => {
                     setMode(value);
                     // A walkthrough needs no typed goal: selecting it starts a
                     // guided tour of the current page right away.
