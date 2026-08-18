@@ -100,6 +100,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function sentTypes(target: { sent: readonly string[] }): string[] {
+  return target.sent.map((raw) => (JSON.parse(raw) as { type: string }).type);
+}
+
 describe("Realtime voice guidance flow", () => {
   it("turns a spoken transcript into an answer and a grounded visual pointer without page action", async () => {
     const createSession = vi.fn(async () => "v=0\r\ns=fake-answer\r\n");
@@ -196,11 +200,11 @@ describe("Realtime voice guidance flow", () => {
     await session.close();
   });
 
-  it("keeps the voice session open until the audio playout drain signal, then closes", async () => {
+  it("never tears the connection down while the answer is still playing out", async () => {
     const broker = { createSession: vi.fn(async () => "v=0\r\ns=fake-answer\r\n") } as SessionBroker;
-    const states: string[] = [];
-    const session = new VoiceSession(broker, {
-      onState: (state) => states.push(state),
+    const disconnect = vi.fn(async () => undefined);
+    const session = new VoiceSession({ ...broker, disconnect }, {
+      onState: vi.fn(),
       onUserTranscript: vi.fn(),
       onAssistantTranscript: vi.fn(),
       onGuidance: vi.fn(async () => ({ ok: true })),
@@ -209,7 +213,7 @@ describe("Realtime voice guidance flow", () => {
 
     await session.startListening(pageContext);
     channel.emit({ type: "input_audio_buffer.speech_started", item_id: "audio-item-drain" });
-    channel.emit({ type: "input_audio_buffer.speech_stopped", item_id: "audio-item-drain" });
+    session.stopListening();
     channel.emit({ type: "response.created", response: { id: "response-drain" } });
     channel.emit({ type: "response.output_audio_transcript.delta", response_id: "response-drain", delta: "Here " });
     channel.emit({
@@ -217,22 +221,26 @@ describe("Realtime voice guidance flow", () => {
       response: { id: "response-drain", status: "completed", output: [] },
     });
     await vi.waitFor(() => expect(session.currentTurn).toBeNull());
-
-    // Generation is done but audio is still playing: the connection must live.
-    expect(microphoneTrack.stop).not.toHaveBeenCalled();
     expect(session.currentState).toBe("idle");
 
+    // The server stopped sending, but the local audio tail may still be
+    // playing: closing here is exactly what used to clip the last words.
     channel.emit({ type: "output_audio_buffer.stopped", response_id: "response-drain" });
-    await vi.waitFor(() => expect(microphoneTrack.stop).toHaveBeenCalledOnce());
-    expect(session.currentState).toBe("idle");
+    await Promise.resolve();
+    expect(microphoneTrack.stop).not.toHaveBeenCalled();
+    expect(disconnect).not.toHaveBeenCalled();
+
+    // The warm session is reused, so the next question skips the handshake.
+    await session.startListening({ ...pageContext, snapshotId: "snapshot-voice-flow-warm" });
+    expect(broker.createSession).toHaveBeenCalledOnce();
+    await session.close();
   });
 
-  it("supersedes a stopped capture within a bounded delay when VAD never saw speech", async () => {
+  it("drops a recording that captured no speech without closing the session", async () => {
     const turns: Array<{ status: string }> = [];
-    const states: string[] = [];
     const disconnect = vi.fn(async () => undefined);
     const session = new VoiceSession({ createSession: vi.fn(async () => "v=0\r\ns=fake-answer\r\n"), disconnect }, {
-      onState: (state) => states.push(state),
+      onState: vi.fn(),
       onUserTranscript: vi.fn(),
       onAssistantTranscript: vi.fn(),
       onGuidance: vi.fn(async () => ({ ok: true })),
@@ -241,23 +249,59 @@ describe("Realtime voice guidance flow", () => {
     });
 
     await session.startListening(pageContext);
-    vi.useFakeTimers();
     session.stopListening();
-
-    expect(session.currentState).toBe("thinking");
-    expect(session.currentTurn).toMatchObject({ status: "capturing" });
-    await vi.advanceTimersByTimeAsync(1_000);
 
     expect(session.currentTurn).toBeNull();
     expect(session.busy).toBe(false);
     expect(session.currentState).toBe("idle");
     expect(turns.at(-1)).toMatchObject({ status: "superseded" });
-    expect(states.at(-1)).toBe("idle");
-    expect(microphoneTrack.stop).toHaveBeenCalledOnce();
-    expect(disconnect).toHaveBeenCalledOnce();
+    // Silence is not a failure: the connection stays warm for the retry.
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(microphoneTrack.stop).not.toHaveBeenCalled();
+    await session.close();
   });
 
-  it("keeps a stopped capture alive when VAD reports speech during the grace window", async () => {
+  it("keeps recording through a pause and sends the whole question on stop", async () => {
+    const userTranscript = vi.fn();
+    const session = new VoiceSession({ createSession: vi.fn(async () => "v=0\r\ns=fake-answer\r\n") }, {
+      onState: vi.fn(),
+      onUserTranscript: userTranscript,
+      onAssistantTranscript: vi.fn(),
+      onGuidance: vi.fn(async () => ({ ok: true })),
+      onError: vi.fn(),
+    });
+
+    await session.startListening(pageContext);
+    channel.emit({ type: "input_audio_buffer.speech_started", item_id: "audio-part-one" });
+    channel.emit({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "audio-part-one",
+      transcript: "Where do I",
+    });
+    // The server thinks the user finished; it is only a breath. The microphone
+    // stays live and the turn stays open.
+    channel.emit({ type: "input_audio_buffer.speech_stopped", item_id: "audio-part-one" });
+    expect(session.currentTurn).toMatchObject({ status: "capturing" });
+    expect(microphoneTrack.enabled).toBe(true);
+    expect(session.currentState).toBe("listening");
+
+    channel.emit({ type: "input_audio_buffer.speech_started", item_id: "audio-part-two" });
+    channel.emit({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "audio-part-two",
+      transcript: "review invoices?",
+    });
+    // Both halves of the question survive, not just the last fragment.
+    expect(userTranscript).toHaveBeenLastCalledWith("Where do I review invoices?", true);
+
+    session.stopListening();
+    expect(sentTypes(channel)).toContain("input_audio_buffer.commit");
+    expect(sentTypes(channel)).toContain("response.create");
+    expect(session.currentState).toBe("thinking");
+    await session.close();
+  });
+
+  it("cancels a recording without asking the model anything", async () => {
     const session = new VoiceSession({ createSession: vi.fn(async () => "v=0\r\ns=fake-answer\r\n") }, {
       onState: vi.fn(),
       onUserTranscript: vi.fn(),
@@ -267,21 +311,42 @@ describe("Realtime voice guidance flow", () => {
     });
 
     await session.startListening(pageContext);
-    vi.useFakeTimers();
-    session.stopListening();
-    channel.emit({ type: "input_audio_buffer.speech_started", item_id: "audio-item-delayed" });
-    await vi.advanceTimersByTimeAsync(1_000);
+    channel.emit({ type: "input_audio_buffer.speech_started", item_id: "audio-cancelled" });
+    session.cancelListening();
 
-    expect(session.currentTurn).toMatchObject({ status: "capturing" });
-    expect(session.currentState).toBe("thinking");
-    expect(microphoneTrack.stop).not.toHaveBeenCalled();
+    expect(session.currentTurn).toBeNull();
+    expect(session.currentState).toBe("idle");
+    expect(sentTypes(channel)).toContain("input_audio_buffer.clear");
+    expect(sentTypes(channel)).not.toContain("response.create");
     await session.close();
   });
 
-  it("rejects late transcripts from closed or unbound audio items on the next turn", async () => {
+  it("survives the benign commit error that press-to-send can produce", async () => {
+    const onError = vi.fn();
+    const session = new VoiceSession({ createSession: vi.fn(async () => "v=0\r\ns=fake-answer\r\n") }, {
+      onState: vi.fn(),
+      onUserTranscript: vi.fn(),
+      onAssistantTranscript: vi.fn(),
+      onGuidance: vi.fn(async () => ({ ok: true })),
+      onError,
+    });
+
+    await session.startListening(pageContext);
+    channel.emit({ type: "input_audio_buffer.speech_started", item_id: "audio-benign" });
+    session.stopListening();
+    channel.emit({
+      type: "error",
+      error: { type: "invalid_request_error", code: "input_audio_buffer_commit_empty", message: "Buffer is empty." },
+    });
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(session.currentState).not.toBe("offline");
+    await session.close();
+  });
+
+  it("rejects late transcripts from retired or unbound audio items on the next turn", async () => {
     const userTranscript = vi.fn();
-    const disconnect = vi.fn(async () => undefined);
-    const session = new VoiceSession({ createSession: vi.fn(async () => "v=0\r\ns=fake-answer\r\n"), disconnect }, {
+    const session = new VoiceSession({ createSession: vi.fn(async () => "v=0\r\ns=fake-answer\r\n") }, {
       onState: vi.fn(),
       onUserTranscript: userTranscript,
       onAssistantTranscript: vi.fn(),
@@ -296,22 +361,19 @@ describe("Realtime voice guidance flow", () => {
       item_id: "audio-item-old",
       transcript: "First question",
     });
-    channel.emit({ type: "input_audio_buffer.speech_stopped", item_id: "audio-item-old" });
+    session.stopListening();
     channel.emit({ type: "response.created", response: { id: "response-old" } });
     channel.emit({
       type: "response.done",
       response: { id: "response-old", status: "completed", output: [] },
     });
-    expect(session.currentTurn).toBeNull();
+    await vi.waitFor(() => expect(session.currentTurn).toBeNull());
     channel.emit({ type: "output_audio_buffer.stopped", response_id: "response-old" });
-    await vi.waitFor(() => expect(disconnect).toHaveBeenCalledOnce());
-    expect(microphoneTrack.stop).toHaveBeenCalledOnce();
     userTranscript.mockClear();
 
-    const oldChannel = channel;
-    channel = new FakeDataChannel();
+    // The warm session is reused for the second question.
     await session.startListening({ ...pageContext, snapshotId: "snapshot-voice-flow-two" });
-    oldChannel.emit({
+    channel.emit({
       type: "conversation.item.input_audio_transcription.completed",
       item_id: "audio-item-old",
       transcript: "Stale first question",
@@ -338,8 +400,7 @@ describe("Realtime voice guidance flow", () => {
       transcript: "Fresh second question",
     });
     expect(userTranscript).toHaveBeenCalledOnce();
-    expect(userTranscript).toHaveBeenCalledWith("Fresh second question", true);
-
+    expect(userTranscript).toHaveBeenLastCalledWith("Fresh second question", true);
     await session.close();
   });
 

@@ -147,9 +147,14 @@ public struct RealtimeClient: Sendable {
             session["audio"] = [
                 "input": [
                     "transcription": ["model": "gpt-4o-mini-transcribe"],
+                    // The user's press ends the turn, never the server: low
+                    // eagerness keeps a thinking pause from closing a question,
+                    // and create_response stays off so the panel decides when
+                    // the recording is complete.
                     "turn_detection": [
                         "type": "semantic_vad",
-                        "create_response": true,
+                        "eagerness": "low",
+                        "create_response": false,
                         "interrupt_response": false,
                     ],
                 ],

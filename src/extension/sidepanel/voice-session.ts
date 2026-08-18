@@ -5,10 +5,15 @@ import type { PageContext } from "../../shared/page-context.js";
 import { isRecord, type GuideMode, type GuideTurn, type GuideTurnStatus } from "../../shared/protocol.js";
 import { redactText, sanitizePageContext } from "../../shared/sanitization.js";
 
-const SILENT_STOP_GRACE_MS = 1_000;
 const TURN_TIMEOUT_MS = 60_000;
 const MAX_RETIRED_AUDIO_ITEM_IDS = 64;
 const AUDIO_DRAIN_FALLBACK_MS = 20_000;
+/** How long a finished session stays connected so the next question is
+ *  instant. Nothing is recorded while idle: the microphone tracks are muted. */
+const IDLE_SESSION_MS = 120_000;
+/** A recording longer than this is committed automatically so a forgotten
+ *  press cannot run forever. Matches the recorder's countdown. */
+export const MAX_RECORDING_MS = 60_000;
 
 export type GuideUiState = "idle" | "listening" | "thinking" | "speaking" | "pointing" | "offline" | "permission-paused";
 export type RealtimeMode = "text" | "voice";
@@ -51,7 +56,9 @@ export class VoiceSession {
   private activeAudioItemId: string | null = null;
   private speechStartedTurnId: string | null = null;
   private stoppedListeningTurnId: string | null = null;
-  private silentStopTimer: number | null = null;
+  private idleSessionTimer: number | null = null;
+  private recordingCapTimer: number | null = null;
+  private turnTranscript = "";
   private turnTimeoutTimer: number | null = null;
   private audioDrainTimer: number | null = null;
   private connectionPromise: Promise<void> | null = null;
@@ -62,6 +69,7 @@ export class VoiceSession {
   private memoryText = "";
   private hasMicrophone = false;
   private readonly retiredAudioItemIds = new Set<string>();
+  private readonly turnAudioItemIds = new Set<string>();
   private readonly handledCalls = new Set<string>();
   private readonly idleTurnWaiters = new Set<() => void>();
 
@@ -149,7 +157,10 @@ export class VoiceSession {
     try {
       await this.ensureConnected("voice", true);
       this.requireIdleTurn();
+      this.clearIdleSessionTimer();
+      this.turnTranscript = "";
       const turn = this.beginTurn(context, guideMode, "capturing");
+      this.armRecordingCap(turn.turnId);
       const spokenIntent = guideMode === "walkthrough"
         ? "The user is about to state a walkthrough goal. Give only the first read-only step and use step guidance."
         : guideMode === "find"
@@ -172,13 +183,51 @@ export class VoiceSession {
     }
   }
 
+  /** Ends the recording and sends it. The user's press is the only thing that
+   *  closes a turn: the server never decides the user is finished. */
   stopListening(): void {
-    this.disableMicrophone();
-    if (this.state === "listening") this.setState("thinking");
     const turn = this.activeTurn;
-    if (!turn || turn.status !== "capturing") return;
+    if (!turn || turn.status !== "capturing") {
+      this.disableMicrophone();
+      return;
+    }
+    this.clearRecordingCap();
+    this.disableMicrophone();
     this.stoppedListeningTurnId = turn.turnId;
-    if (this.speechStartedTurnId !== turn.turnId) this.scheduleSilentTurnClose(turn.turnId);
+    if (this.speechStartedTurnId !== turn.turnId) {
+      // Nothing was ever heard: drop the turn quietly instead of asking the
+      // model about silence, and keep the warm session for the retry.
+      this.updateTurn("superseded");
+      this.clearActiveTurn();
+      this.setState("idle");
+      this.startIdleSessionTimer();
+      return;
+    }
+    this.setState("thinking");
+    // A commit for audio the server already committed is a benign no-op; the
+    // error handler recognises those and leaves the session alone.
+    this.sendEvent({ type: "input_audio_buffer.commit" });
+    this.updateTurn("responding");
+    this.transition("response-created");
+    this.createResponse();
+  }
+
+  /** Discards the recording without asking the model anything. */
+  cancelListening(): void {
+    const turn = this.activeTurn;
+    this.clearRecordingCap();
+    this.disableMicrophone();
+    if (!turn || turn.status !== "capturing") return;
+    try {
+      this.sendEvent({ type: "input_audio_buffer.clear" });
+    } catch {
+      // The turn is being dropped either way.
+    }
+    this.updateTurn("superseded");
+    this.clearActiveTurn();
+    this.turnTranscript = "";
+    this.setState("idle");
+    this.startIdleSessionTimer();
   }
 
   async supersedeActiveTurn(): Promise<void> {
@@ -195,7 +244,8 @@ export class VoiceSession {
 
   async close(disconnectHost = true): Promise<void> {
     this.generation += 1;
-    this.clearSilentStopTimer();
+    this.clearIdleSessionTimer();
+    this.clearRecordingCap();
     this.clearAudioDrainTimer();
     this.connectionPromise = null;
     this.connectionMode = null;
@@ -217,6 +267,8 @@ export class VoiceSession {
     }
     this.clearActiveTurn();
     this.retiredAudioItemIds.clear();
+    this.turnAudioItemIds.clear();
+    this.turnTranscript = "";
     this.handledCalls.clear();
     this.setState("idle");
     if (disconnectHost) {
@@ -234,6 +286,12 @@ export class VoiceSession {
 
   get currentTurn(): Readonly<GuideTurn> | null {
     return this.activeTurn ? { ...this.activeTurn } : null;
+  }
+
+  /** The live microphone stream while recording, so the panel can render a
+   *  level meter from the same capture the model hears. */
+  get microphoneStream(): MediaStream | null {
+    return this.activeTurn?.status === "capturing" ? this.microphone : null;
   }
 
   get busy(): boolean {
@@ -332,8 +390,10 @@ export class VoiceSession {
   }
 
   private beginTurn(context: PageContext, mode: GuideMode, status: GuideTurnStatus): GuideTurn {
-    this.clearSilentStopTimer();
+    this.clearIdleSessionTimer();
+    this.clearRecordingCap();
     this.clearAudioDrainTimer();
+    this.turnAudioItemIds.clear();
     this.retireActiveAudioItem();
     this.speechStartedTurnId = null;
     this.stoppedListeningTurnId = null;
@@ -386,19 +446,25 @@ export class VoiceSession {
         if (this.stoppedListeningTurnId !== this.activeTurn?.turnId) this.transition("speech-started");
         break;
       case "input_audio_buffer.speech_stopped":
-        if (!this.acceptAudioEvent(event)) break;
-        this.disableMicrophone();
-        this.transition("speech-stopped");
+        // Only a pause. The microphone stays live and the turn stays open
+        // until the user presses stop, so a breath never truncates a question.
+        this.acceptAudioEvent(event);
         break;
       case "conversation.item.input_audio_transcription.delta":
         if (this.acceptAudioEvent(event) && typeof event.delta === "string") this.callbacks.onUserTranscript(event.delta, false);
         break;
       case "conversation.item.input_audio_transcription.completed":
-        if (this.acceptAudioEvent(event) && typeof event.transcript === "string") this.callbacks.onUserTranscript(event.transcript, true);
+        if (this.acceptAudioEvent(event) && typeof event.transcript === "string") {
+          // A pause splits one spoken question into several items; emit the
+          // whole question so far rather than only its last fragment.
+          this.turnTranscript = this.turnTranscript
+            ? `${this.turnTranscript} ${event.transcript}`.trim()
+            : event.transcript;
+          this.callbacks.onUserTranscript(this.turnTranscript, true);
+        }
         break;
       case "response.created":
         if (!this.activeTurn || !this.acceptCreatedResponse(event)) break;
-        this.clearSilentStopTimer();
         this.scheduleTurnTimeout(this.activeTurn.turnId);
         this.disableMicrophone();
         if (this.activeTurn?.status === "capturing") this.updateTurn("responding");
@@ -423,9 +489,12 @@ export class VoiceSession {
         break;
       case "output_audio_buffer.stopped":
       case "output_audio_buffer.cleared":
-        if (this.audioDrainTimer !== null) void this.finishAudioDrain();
+        if (this.audioDrainTimer !== null) this.finishAudioDrain();
         break;
       case "error":
+        // Committing a buffer the server already handled is expected with
+        // press-to-send and must never kill a working session.
+        if (isBenignRealtimeError(event)) break;
         this.terminateRealtime(realtimeErrorMessage(event));
         break;
       default:
@@ -548,24 +617,19 @@ export class VoiceSession {
     if (!itemId) {
       if (!allowSet) return this.speechStartedTurnId === turn.turnId;
       this.speechStartedTurnId = turn.turnId;
-      this.clearSilentStopTimer();
       return true;
     }
     if (this.retiredAudioItemIds.has(itemId)) return false;
-    if (this.activeAudioItemId) {
-      if (itemId !== this.activeAudioItemId) {
-        this.rememberRetiredAudioItem(itemId);
-        return false;
-      }
-      return this.speechStartedTurnId === turn.turnId;
-    }
-    if (!allowSet) {
+    if (this.turnAudioItemIds.has(itemId)) return this.speechStartedTurnId === turn.turnId;
+    if (!allowSet && this.speechStartedTurnId !== turn.turnId) {
       this.rememberRetiredAudioItem(itemId);
       return false;
     }
+    // A pause inside one recording opens a second item. Both belong to this
+    // turn, so both are accepted and their transcripts are concatenated.
+    this.turnAudioItemIds.add(itemId);
     this.activeAudioItemId = itemId;
     this.speechStartedTurnId = turn.turnId;
-    this.clearSilentStopTimer();
     return true;
   }
 
@@ -573,15 +637,18 @@ export class VoiceSession {
     this.clearAudioDrainTimer();
     this.audioDrainTimer = window.setTimeout(() => {
       this.audioDrainTimer = null;
-      void this.finishAudioDrain();
+      this.finishAudioDrain();
     }, AUDIO_DRAIN_FALLBACK_MS);
   }
 
-  private async finishAudioDrain(): Promise<void> {
+  private finishAudioDrain(): void {
     this.clearAudioDrainTimer();
-    // A turn that started while the tail was playing keeps the session alive.
+    // The server stopped sending, but the local jitter buffer and the audio
+    // element may still be playing the tail. Tearing the peer down here is
+    // exactly what used to clip the last words, so the session simply goes
+    // idle and closes later if nothing else happens.
     if (this.activeTurn || this.startingTurn) return;
-    await this.close();
+    this.startIdleSessionTimer();
   }
 
   private clearAudioDrainTimer(): void {
@@ -590,20 +657,36 @@ export class VoiceSession {
     this.audioDrainTimer = null;
   }
 
-  private scheduleSilentTurnClose(turnId: string): void {
-    if (this.silentStopTimer !== null) return;
-    this.silentStopTimer = window.setTimeout(() => {
-      this.silentStopTimer = null;
-      if (this.activeTurn?.turnId !== turnId || this.activeTurn.status !== "capturing"
-        || this.speechStartedTurnId === turnId) return;
+  /** Keeps a finished session connected briefly so the next question skips
+   *  the whole WebRTC handshake. Idle means no turn and muted microphone. */
+  private startIdleSessionTimer(): void {
+    this.clearIdleSessionTimer();
+    this.idleSessionTimer = window.setTimeout(() => {
+      this.idleSessionTimer = null;
+      if (this.activeTurn || this.startingTurn) return;
       void this.close();
-    }, SILENT_STOP_GRACE_MS);
+    }, IDLE_SESSION_MS);
   }
 
-  private clearSilentStopTimer(): void {
-    if (this.silentStopTimer === null) return;
-    window.clearTimeout(this.silentStopTimer);
-    this.silentStopTimer = null;
+  private clearIdleSessionTimer(): void {
+    if (this.idleSessionTimer === null) return;
+    window.clearTimeout(this.idleSessionTimer);
+    this.idleSessionTimer = null;
+  }
+
+  private armRecordingCap(turnId: string): void {
+    this.clearRecordingCap();
+    this.recordingCapTimer = window.setTimeout(() => {
+      this.recordingCapTimer = null;
+      if (this.activeTurn?.turnId !== turnId || this.activeTurn.status !== "capturing") return;
+      this.stopListening();
+    }, MAX_RECORDING_MS);
+  }
+
+  private clearRecordingCap(): void {
+    if (this.recordingCapTimer === null) return;
+    window.clearTimeout(this.recordingCapTimer);
+    this.recordingCapTimer = null;
   }
 
   private scheduleTurnTimeout(turnId: string): void {
@@ -635,7 +718,7 @@ export class VoiceSession {
   }
 
   private clearActiveTurn(): void {
-    this.clearSilentStopTimer();
+    this.clearRecordingCap();
     this.clearTurnTimeout();
     this.retireActiveAudioItem();
     this.activeTurn = null;
@@ -790,6 +873,19 @@ function withDeadline<T>(promise: Promise<T>, timeoutMs: number, message: string
       },
     );
   });
+}
+
+/** Errors that are a normal consequence of press-to-send: committing a buffer
+ *  the server already committed, or one that holds no audio at all. */
+function isBenignRealtimeError(event: Record<string, unknown>): boolean {
+  const error = event.error;
+  if (!isRecord(error)) return false;
+  const code = typeof error.code === "string" ? error.code : "";
+  const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
+  return code.includes("input_audio_buffer_commit_empty")
+    || code.includes("buffer_too_small")
+    || message.includes("buffer is empty")
+    || message.includes("buffer too small");
 }
 
 function realtimeErrorMessage(event: Record<string, unknown>): string {

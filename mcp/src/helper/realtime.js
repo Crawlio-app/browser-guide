@@ -29,7 +29,8 @@ function sessionConfiguration(mode) {
     session.audio = {
       input: {
         transcription: { model: "gpt-4o-mini-transcribe" },
-        turn_detection: { type: "semantic_vad", create_response: true, interrupt_response: false },
+        // The user's press ends the turn, never the server.
+        turn_detection: { type: "semantic_vad", eagerness: "low", create_response: false, interrupt_response: false },
       },
       output: { voice: "marin" },
     };

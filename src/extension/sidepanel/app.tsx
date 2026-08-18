@@ -131,6 +131,7 @@ function BrowserGuideApp(): React.ReactElement {
   const activeTurnQuestion = useRef("");
   const lastTurnTyped = useRef(false);
   const speakAnswersRef = useRef(false);
+  const voiceStateRef = useRef<GuideUiState>("idle");
   const transientKeyInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -143,6 +144,7 @@ function BrowserGuideApp(): React.ReactElement {
   const continuingWalkthrough = useRef(false);
   runtimeRef.current = runtime;
   speakAnswersRef.current = speakAnswers;
+  voiceStateRef.current = voiceState;
 
   const broker = useMemo(() => new RuntimeSessionBroker(), []);
 
@@ -599,14 +601,16 @@ function BrowserGuideApp(): React.ReactElement {
     chrome.runtime.onMessage.addListener(listener);
 
     const visibilityListener = () => {
-      if (document.visibilityState === "hidden") {
-        if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
-        refreshTimer.current = null;
-        activeEvidenceSnapshotId.current = null;
-        if (walkthroughCoordinator.current.session) setWalkthrough(walkthroughCoordinator.current.pause("user"));
-        void runtimeSend({ type: "GUIDE_CLEAR_GUIDANCE" }).catch(() => undefined);
-        void session.close();
-      }
+      if (document.visibilityState !== "hidden") return;
+      if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+      activeEvidenceSnapshotId.current = null;
+      if (walkthroughCoordinator.current.session) setWalkthrough(walkthroughCoordinator.current.pause("user"));
+      void runtimeSend({ type: "GUIDE_CLEAR_GUIDANCE" }).catch(() => undefined);
+      // Switching windows must not cut an answer off mid-sentence: a session
+      // that is still talking or working keeps running until it finishes.
+      if (session.busy || voiceStateRef.current === "speaking") return;
+      void session.close();
     };
     document.addEventListener("visibilitychange", visibilityListener);
     return () => {
