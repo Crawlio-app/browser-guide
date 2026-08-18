@@ -153,7 +153,16 @@ async function handleTabUpdated(
 
 async function handleTabActivated(tabId: number): Promise<void> {
   await ensureStateLoaded();
-  if (runtimeState.tabId !== undefined && tabId !== runtimeState.tabId) await pause("not-authorized");
+  if (runtimeState.tabId === undefined) return;
+  if (tabId === runtimeState.tabId) {
+    // Coming back to the tab that was already shared. The grant did not go
+    // anywhere, so neither should the session: leaving it paused made
+    // switching tabs feel like losing the page, and nothing on screen said
+    // that returning was enough to fix it.
+    if (runtimeState.status === "permission-paused") await resumeIfStillAuthorized();
+    return;
+  }
+  await pause("not-authorized");
 }
 
 async function handleTabRemoved(tabId: number): Promise<void> {
@@ -185,6 +194,7 @@ async function handleExplicitActivation(tab: chrome.tabs.Tab, toggleListening: b
     refsValid: false,
     latestSnapshotId: undefined,
   });
+  markSharedTab(tab.id, true);
   chrome.action.setBadgeText({ text: "" }, () => {
     void chrome.runtime.lastError;
   });
@@ -480,6 +490,7 @@ async function resumeIfStillAuthorized(): Promise<{ ok: boolean; state: Extensio
       refsValid: false,
       latestSnapshotId: undefined,
     });
+    markSharedTab(tab.id, true);
     await broadcastState();
     return { ok: true, state: runtimeState };
   } catch {
@@ -659,8 +670,34 @@ async function updateState(patch: Partial<ExtensionRuntimeState>): Promise<void>
   });
 }
 
+/**
+ * Marks the shared tab in the toolbar, so which page is being read is visible
+ * from the tab strip rather than only inside the panel. Claude in Chrome makes
+ * the same thing visible by putting the tab it has taken into a named group;
+ * a per-tab badge says the same thing without asking for a new permission.
+ */
+function markSharedTab(tabId: number | undefined, shared: boolean): void {
+  if (tabId === undefined) return;
+  // Every call here is decoration. A tab that closed mid-update, or a Chrome
+  // build without one of these, must never be able to fail an activation.
+  try {
+    chrome.action.setBadgeText?.({ tabId, text: shared ? "●" : "" }, () => {
+      void chrome.runtime.lastError;
+    });
+    chrome.action.setTitle?.({
+      tabId,
+      title: shared ? "Browser Guide is reading this tab" : "Browser Guide",
+    }, () => {
+      void chrome.runtime.lastError;
+    });
+  } catch {
+    // The marker is unavailable; sharing itself is unaffected.
+  }
+}
+
 async function pause(reason: PermissionPauseReason): Promise<void> {
   await ensureStateLoaded();
+  markSharedTab(runtimeState.tabId, false);
   if (runtimeState.tabId !== undefined) await disposeContentRuntime(runtimeState.tabId);
   await updateState({
     status: "permission-paused",

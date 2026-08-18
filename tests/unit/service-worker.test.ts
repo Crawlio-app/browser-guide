@@ -222,6 +222,30 @@ describe("service worker startup and content runtime readiness", () => {
     }));
   });
 
+  it("resumes the shared tab when the user comes back to it", async () => {
+    // Switching away pauses, which is right: the grant is per tab. Switching
+    // back used to leave it paused with nothing on screen saying that
+    // returning was enough, so the session looked lost whenever anyone
+    // glanced at another tab.
+    const harness = createHarness();
+    vi.stubGlobal("chrome", harness.chromeStub);
+    await import("../../src/extension/service-worker.js");
+    harness.resolveState({
+      status: "permission-paused",
+      tabId: 17,
+      authorizedOrigin: "https://fixture.test",
+      pauseReason: "not-authorized",
+      refsValid: false,
+    });
+    harness.tabActivatedListeners[0]?.({ tabId: 17, windowId: 4 });
+
+    await vi.waitFor(() => expect(latestStoredState(harness)).toMatchObject({
+      status: "ready",
+      tabId: 17,
+      authorizedOrigin: "https://fixture.test",
+    }));
+  });
+
   it("pauses and tears down an authorized tab when Chrome replaces it", async () => {
     const harness = createHarness();
     vi.stubGlobal("chrome", harness.chromeStub);
