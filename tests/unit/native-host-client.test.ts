@@ -121,6 +121,43 @@ describe("NativeHostClient", () => {
     expect(harness.connectNative).toHaveBeenCalledTimes(3);
   });
 
+  it("retries a read whose port died before it ever answered, and never a write", async () => {
+    // Chrome tearing the port down before the first response is the state the
+    // panel hits while an install is still settling. Treating it as terminal
+    // left a read with no way forward.
+    const reads = createHarness();
+    const health = reads.client.health();
+    await vi.waitFor(() => expect(reads.ports[0]?.messages).toHaveLength(1));
+    reads.lastError = "Native host has exited.";
+    reads.ports[0]?.remoteDisconnect();
+
+    await vi.waitFor(() => expect(reads.ports[1]?.messages).toHaveLength(1));
+    expect(reads.ports[1]?.messages[0]?.requestId).toBe(reads.ports[0]?.messages[0]?.requestId);
+    reads.ports[1]?.respond(0, { ready: true, configured: true, claude: false });
+    await expect(health).resolves.toEqual({ ready: true, configured: true, claude: false });
+
+    // A write may already have been delivered and applied by the process that
+    // vanished, so it stops where it is rather than risk landing twice.
+    const writes = createHarness();
+    const failure = writes.client.memoryAppend("https://example.test", "q", "a").catch((error: unknown) => error);
+    await vi.waitFor(() => expect(writes.ports[0]?.messages).toHaveLength(1));
+    writes.lastError = "Native host has exited.";
+    writes.ports[0]?.remoteDisconnect();
+    expect(((await failure) as NativeHostClientError).code).toBe("HOST_UNAVAILABLE");
+    expect(writes.connectNative).toHaveBeenCalledOnce();
+  });
+
+  it("does not retry a read when the helper is simply not installed", async () => {
+    const harness = createHarness();
+    const failure = harness.client.health().catch((error: unknown) => error);
+    await vi.waitFor(() => expect(harness.ports[0]?.messages).toHaveLength(1));
+    harness.lastError = "Specified native messaging host not found.";
+    harness.ports[0]?.remoteDisconnect();
+
+    expect(((await failure) as NativeHostClientError).code).toBe("HOST_NOT_FOUND");
+    expect(harness.connectNative).toHaveBeenCalledOnce();
+  });
+
   it("keeps an uninstalled helper distinguishable from one that did not answer", async () => {
     const missing = createHarness();
     const missingFailure = missing.client.health().catch((error: unknown) => error);
@@ -129,11 +166,15 @@ describe("NativeHostClient", () => {
     missing.ports[0]?.remoteDisconnect();
     expect(((await missingFailure) as NativeHostClientError).code).toBe("HOST_NOT_FOUND");
 
+    // A read gets one more attempt here, so the code only settles once the
+    // second port dies too.
     const silent = createHarness();
     const silentFailure = silent.client.health().catch((error: unknown) => error);
     await vi.waitFor(() => expect(silent.ports[0]?.messages).toHaveLength(1));
     silent.lastError = "Native host has exited.";
     silent.ports[0]?.remoteDisconnect();
+    await vi.waitFor(() => expect(silent.ports[1]?.messages).toHaveLength(1));
+    silent.ports[1]?.remoteDisconnect();
     expect(((await silentFailure) as NativeHostClientError).code).toBe("HOST_UNAVAILABLE");
   });
 

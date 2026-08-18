@@ -342,7 +342,8 @@ export class NativeHostClient {
       const port = await this.ensurePort();
       return await this.send(port, request, timeoutMs) as NativeDataByRequest[T];
     } catch (error) {
-      if (error instanceof NativeHostClientError && error.reconnectable && reconnectsRemaining > 0) {
+      if (!(error instanceof NativeHostClientError) || reconnectsRemaining <= 0) throw error;
+      if (error.reconnectable || retryableRead(request.type, error.code)) {
         return this.requestWithOneReconnect(request, timeoutMs, reconnectsRemaining - 1);
       }
       throw error;
@@ -394,8 +395,11 @@ export class NativeHostClient {
     } catch {
       permitted = false;
     }
+    // Another port died while this one was waiting on the permission check,
+    // which is ordinary when an install fires several requests at once.
+    // Nothing has been posted yet, so one more attempt is safe for any request.
     if (generation !== this.generation) {
-      throw new NativeHostClientError("HOST_DISCONNECTED", "The native host connection was closed.", false);
+      throw new NativeHostClientError("HOST_DISCONNECTED", "The native host connection was closed.", false, false, true);
     }
     if (!permitted) {
       this.state = "CLOSED";
@@ -417,7 +421,7 @@ export class NativeHostClient {
     if (generation !== this.generation) {
       this.expectedDisconnects.add(port);
       port.disconnect();
-      throw new NativeHostClientError("HOST_DISCONNECTED", "The native host connection was closed.", false);
+      throw new NativeHostClientError("HOST_DISCONNECTED", "The native host connection was closed.", false, false, true);
     }
     this.port = port;
     this.attachPort(port);
@@ -431,12 +435,14 @@ export class NativeHostClient {
   ): Promise<NativeSuccessData> {
     return new Promise((resolve, reject) => {
       if (port !== this.port || this.state === "CLOSED") {
+        // Named for what it is: the message never left. Reconnecting is safe
+        // for a write as much as a read, because nothing was delivered.
         reject(new NativeHostClientError(
           "HOST_DISCONNECTED",
           "The native host disconnected before the request was sent.",
           true,
           false,
-          this.state === "OPEN",
+          true,
         ));
         return;
       }
@@ -600,6 +606,34 @@ function extractRequestId(value: unknown): string | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const requestId = (value as Record<string, unknown>).requestId;
   return typeof requestId === "string" ? requestId : null;
+}
+
+/**
+ * Requests that only read. When a host vanishes after a message was posted,
+ * whether it acted on it first is unknowable, so retrying anything that writes
+ * risks applying it twice. These cannot be applied at all.
+ */
+const READ_ONLY_REQUESTS: ReadonlySet<NativeRequestType> = new Set<NativeRequestType>([
+  "HOST_HEALTH",
+  "HOST_MEMORY_GET",
+  "HOST_CREDENTIAL_SOURCES",
+]);
+
+/**
+ * A host that was posted to and then vanished without answering is worth one
+ * more try for a read. Without it, a read issued while Chrome is still
+ * settling after an install fails permanently and the panel reports a dead end
+ * nobody can act on.
+ *
+ * Only HOST_UNAVAILABLE qualifies: it is raised solely when a port we were
+ * using died on its own. HOST_DISCONNECTED covers deliberate closes, and
+ * retrying those would ignore a caller that asked us to stop. HOST_NOT_FOUND
+ * cannot be retried into existence, PERMISSION_REQUIRED needs a person, and
+ * TIMEOUT means the host may be slow, where a second wait would double a delay
+ * the caller already bounded.
+ */
+function retryableRead(type: NativeRequestType, code: HostClientErrorCode): boolean {
+  return code === "HOST_UNAVAILABLE" && READ_ONLY_REQUESTS.has(type);
 }
 
 function unavailableHostError(description?: string): NativeHostClientError {

@@ -23,7 +23,11 @@ type HelperKind = "stub" | "broken" | "absent";
  * a working stub, a registered helper that dies on launch, or no manifest at
  * all. Those three produce the three answers the panel must keep apart.
  */
-async function openPanel(helper: HelperKind, environment: Record<string, string> = {}): Promise<Page> {
+async function openPanel(
+  helper: HelperKind,
+  environment: Record<string, string> = {},
+  settleMs = 6_000,
+): Promise<Page> {
   temporaryRoot = await mkdtemp(join(tmpdir(), "browser-guide-signin-e2e-"));
   const profilePath = resolve(temporaryRoot, "profile");
   const extensionPath = resolve(temporaryRoot, "extension");
@@ -81,9 +85,9 @@ async function openPanel(helper: HelperKind, environment: Record<string, string>
   expect(worker.url()).toBe(`${extensionOrigin}/service-worker.js`);
 
   // Install fires a warm-up health check and opens the welcome page, which
-  // asks too. Opening the panel into that burst is a cold-start race, not the
-  // subject of these tests, so let it drain first.
-  await new Promise((settle) => setTimeout(settle, 6_000));
+  // asks too. Most tests here are about what the sign-in screen says, so they
+  // let that burst drain first; the cold-start test passes 0 to land in it.
+  if (settleMs > 0) await new Promise((settle) => setTimeout(settle, settleMs));
 
   const panel = await context.newPage();
   await panel.goto(`${extensionOrigin}/sidepanel.html`);
@@ -148,6 +152,17 @@ describe.skipIf(!existsSync(chromiumPath))("sign-in surface", () => {
     // The transport reason for this state only repeats the headline in
     // vocabulary nobody outside this codebase uses, so it stays off screen.
     expect(await panel.locator(".setup-error").count()).toBe(0);
+  }, 90_000);
+
+  it("reaches sign-in even when the panel opens into the install itself", async () => {
+    // Opening the panel the instant the extension installs puts its health
+    // check in the same breath as the warm-up and the welcome page. Chrome can
+    // tear the shared port down under that, and the panel used to strand there
+    // reporting a closed connection, which no one can act on. A read that was
+    // never answered is now worth one more attempt.
+    const panel = await openPanel("stub", {}, 0);
+    await expect.poll(() => setupTitle(panel), { timeout: 30_000 }).toBe("Connect your sign-in");
+    await expect.poll(() => panel.locator(".signin-button").count(), { timeout: 10_000 }).toBeGreaterThan(0);
   }, 90_000);
 
   it("does ask for an install when Chrome has no helper registered at all", async () => {

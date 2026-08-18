@@ -19,6 +19,7 @@ import {
   isHostBridgeRequest,
   type HostBridgeRequest,
   type HostClientResponse,
+  type NativeHealthData,
 } from "../shared/native-protocol.js";
 import { NativeHostClient, toHostClientFailure } from "./native-host-client.js";
 
@@ -195,12 +196,31 @@ async function handleExplicitActivation(tab: chrome.tabs.Tab, toggleListening: b
   }
 }
 
+let healthInFlight: Promise<NativeHealthData> | null = null;
+
+/**
+ * One health check at a time, shared by everyone who asks.
+ *
+ * Installing fires three at once: this worker warms the helper up, the welcome
+ * page checks, and the side panel checks. They are the same question, they go
+ * down the same port, and they arrive in the noisiest moment of the
+ * extension's life. Asking once is both cheaper and steadier.
+ */
+function sharedHealth(): Promise<NativeHealthData> {
+  if (healthInFlight) return healthInFlight;
+  const request = nativeHost.health().finally(() => {
+    if (healthInFlight === request) healthInFlight = null;
+  });
+  healthInFlight = request;
+  return request;
+}
+
 async function prewarmNativeHost(): Promise<void> {
   // The first Keychain read after a helper update runs a slow signature
   // evaluation. Doing it here keeps that latency out of the user's first
   // panel or wizard interaction. Every failure mode is expected and silent.
   try {
-    await nativeHost.health();
+    await sharedHealth();
   } catch {
     // Warmup only; real requests surface their own state.
   }
@@ -250,7 +270,7 @@ async function handleHostBridgeRequest(message: HostBridgeRequest): Promise<Host
   try {
     switch (message.type) {
       case "GUIDE_HOST_HEALTH":
-        return { ok: true, health: await nativeHost.health() };
+        return { ok: true, health: await sharedHealth() };
       case "GUIDE_HOST_CONFIGURE_KEY": {
         const result = await nativeHost.configure(message.key);
         return { ok: true, configured: result.configured };

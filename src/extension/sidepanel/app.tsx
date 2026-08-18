@@ -77,6 +77,14 @@ const MODE_LABELS: Record<GuideMode, string> = {
   walkthrough: "Walkthrough",
 };
 
+/**
+ * How long to wait before each silent re-check of a helper that did not
+ * answer. Four attempts across roughly fourteen seconds covers the window
+ * Chrome needs to settle after an install without leaving anyone watching a
+ * spinner if the helper is truly gone.
+ */
+const UNREACHABLE_RETRY_DELAYS_MS = [500, 1_500, 4_000, 8_000];
+
 const MODE_HINTS: Record<GuideMode, string> = {
   ask: "Explain what is on this page",
   find: "Point to the right control",
@@ -362,6 +370,33 @@ function BrowserGuideApp(): React.ReactElement {
       setIssue({ kind: "helper", message: errorMessage(error, "The local helper is unavailable.") });
     }
   }, []);
+
+  // Opening the panel during an install lands in a window where the helper is
+  // briefly unreachable. Asking again a moment later resolves it, so the panel
+  // does that itself rather than parking on a screen whose only move is a
+  // button nobody was told to press. Bounded, because a helper that is
+  // genuinely down should say so instead of spinning forever, and silent,
+  // because a recovery the user never noticed needs no announcement.
+  useEffect(() => {
+    if (setup !== "helper-unreachable") return;
+    let cancelled = false;
+    let timer = 0;
+    const attemptAfter = (attempt: number): void => {
+      if (cancelled || attempt >= UNREACHABLE_RETRY_DELAYS_MS.length) return;
+      timer = window.setTimeout(() => {
+        void refreshHost(false)
+          .catch(() => undefined)
+          .then(() => {
+            if (!cancelled) attemptAfter(attempt + 1);
+          });
+      }, UNREACHABLE_RETRY_DELAYS_MS[attempt]);
+    };
+    attemptAfter(0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [refreshHost, setup]);
 
   const capturePage = useCallback(async (): Promise<PageContext> => {
     const response = await runtimeSend<unknown>({ type: "GUIDE_CAPTURE_CONTEXT", shareVisual });
