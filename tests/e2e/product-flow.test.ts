@@ -115,7 +115,7 @@ describe.skipIf(!existsSync(chromiumPath))("controlled full product flow", () =>
       const hostLog = await readFile(hostLogPath, "utf8").catch(() => "native host was never launched");
       throw new Error(`The controlled product did not reach ready (setup=${state ?? "none"}): ${copy}; host=${hostLog.trim()}`);
     }
-    if (await sidePanelPage.locator(".empty-instrument h1").innerText() !== "What do you need?") {
+    if (await sidePanelPage.locator(".empty-instrument h1").innerText() !== "Ask about this page") {
       throw new Error("The ready product surface did not render.");
     }
 
@@ -248,7 +248,7 @@ describe.skipIf(!existsSync(chromiumPath))("controlled full product flow", () =>
     await expect.poll(async () => {
       const step = sidePanelPage?.locator(".guide-card .guide-eyebrow");
       return step && await step.count() > 0 ? step.innerText() : "";
-    }, { timeout: 6_000 }).toContain("ALL DONE");
+    }, { timeout: 6_000 }).toContain("WALKTHROUGH COMPLETE");
     await expect.poll(() => fixturePage?.locator("[data-browser-guide-root]").getAttribute("data-guide-visible"), { timeout: 5_000 }).toBe(null);
 
     expect(await fixturePage.evaluate(() => (window as unknown as { __guideCounters: Record<string, number> }).__guideCounters)).toEqual({

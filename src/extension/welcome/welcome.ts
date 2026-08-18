@@ -30,7 +30,6 @@ const stepTour = requiredElement<HTMLDivElement>("step-tour");
 const installBlock = requiredElement<HTMLDivElement>("install-block");
 const copyCommandButton = requiredElement<HTMLButtonElement>("copy-cmd");
 const installCommand = requiredElement<HTMLElement>("install-cmd");
-const allSetMascot = requiredElement<HTMLElement>("allset-mascot");
 const modalOverlay = requiredElement<HTMLDivElement>("modal-overlay");
 const permissionList = requiredElement<HTMLUListElement>("permission-list");
 const permissionStatus = requiredElement<HTMLParagraphElement>("permission-status");
@@ -187,7 +186,6 @@ function finishOnboarding(): void {
   stepTour.classList.add("current");
   connectTitle.textContent = "You're all set!";
   connectSubtitle.textContent = "Taking you to the practice page — the guide will show you around…";
-  allSetMascot.hidden = false;
   connectButton.hidden = true;
   recheckButton.hidden = true;
   setStatus(null);

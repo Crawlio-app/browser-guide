@@ -131,7 +131,7 @@ describe.skipIf(!existsSync(chromiumPath))("model-free demo tour without the nat
     await expect.poll(
       () => sidePanelPage?.locator(".guide-card .guide-eyebrow").innerText().then((text) => text.toLowerCase()).catch(() => ""),
       { timeout: 10_000 },
-    ).toContain("all done");
+    ).toContain("walkthrough complete");
     await expect.poll(
       () => practicePage?.locator("[data-browser-guide-root]").getAttribute("data-guide-visible"),
       { timeout: 5_000 },

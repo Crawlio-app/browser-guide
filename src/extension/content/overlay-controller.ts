@@ -124,7 +124,6 @@ export class OverlayController {
     this.card.append(close, title, body);
     if (this.copy.presentation === "step") {
       this.card.classList.add("guide-step");
-      this.card.append(buildCompassMascot());
       const footer = document.createElement("div");
       footer.className = "guide-footer";
       const progress = document.createElement("span");
@@ -363,45 +362,6 @@ export class OverlayController {
       targets: targetMirrors,
     };
   }
-}
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-function buildCompassMascot(): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("class", "guide-mascot");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("aria-hidden", "true");
-  const ring = document.createElementNS(SVG_NS, "circle");
-  ring.setAttribute("cx", "12");
-  ring.setAttribute("cy", "13");
-  ring.setAttribute("r", "8.6");
-  ring.setAttribute("fill", "#ffffff");
-  ring.setAttribute("stroke", "#5B9EFF");
-  ring.setAttribute("stroke-width", "1.6");
-  const needle = document.createElementNS(SVG_NS, "path");
-  needle.setAttribute("d", "M12 1.6 L13.8 5.4 L10.2 5.4 Z");
-  needle.setAttribute("fill", "#5B9EFF");
-  const leftEye = document.createElementNS(SVG_NS, "circle");
-  leftEye.setAttribute("class", "guide-mascot-eye");
-  leftEye.setAttribute("cx", "9.3");
-  leftEye.setAttribute("cy", "11.6");
-  leftEye.setAttribute("r", "1.15");
-  leftEye.setAttribute("fill", "#1d1f1c");
-  const rightEye = document.createElementNS(SVG_NS, "circle");
-  rightEye.setAttribute("class", "guide-mascot-eye");
-  rightEye.setAttribute("cx", "14.7");
-  rightEye.setAttribute("cy", "11.6");
-  rightEye.setAttribute("r", "1.15");
-  rightEye.setAttribute("fill", "#1d1f1c");
-  const smile = document.createElementNS(SVG_NS, "path");
-  smile.setAttribute("d", "M9.5 15 Q12 17 14.5 15");
-  smile.setAttribute("fill", "none");
-  smile.setAttribute("stroke", "#1d1f1c");
-  smile.setAttribute("stroke-width", "1.2");
-  smile.setAttribute("stroke-linecap", "round");
-  svg.append(ring, needle, leftEye, rightEye, smile);
-  return svg;
 }
 
 function intersectsViewport(rect: ViewportRect, viewport: GuidanceViewportMirror): boolean {

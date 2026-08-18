@@ -40,6 +40,9 @@ async function buildExtension() {
     cp(resolve(root, "src/extension/manifest.json"), resolve(outdir, "manifest.json")),
     cp(resolve(root, "src/extension/sidepanel/sidepanel.html"), resolve(outdir, "sidepanel.html")),
     cp(resolve(root, "src/extension/sidepanel/styles.css"), resolve(outdir, "styles.css")),
+    // The AudioWorklet module loads in its own global scope, so it ships as a
+    // packaged file rather than part of the panel bundle.
+    cp(resolve(root, "src/extension/sidepanel/audio-processor.js"), resolve(outdir, "audio-processor.js")),
     cp(resolve(root, "src/extension/welcome/welcome.html"), resolve(outdir, "welcome.html")),
     cp(resolve(root, "src/extension/welcome/welcome.css"), resolve(outdir, "welcome.css")),
     cp(resolve(root, "src/extension/assets/icons"), resolve(outdir, "icons"), { recursive: true }),

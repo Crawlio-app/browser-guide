@@ -28,7 +28,8 @@ import {
 } from "../../shared/protocol.js";
 import { WalkthroughCoordinator } from "../../shared/walkthrough.js";
 import { DEMO_TOUR_GOAL, isPracticePage, resolveDemoStep } from "./demo-tour.js";
-import { SessionBrokerError, VoiceSession, type GuideUiState, type RealtimeMode, type SessionBroker, type VoiceErrorKind } from "./voice-session.js";
+import { MAX_RECORDING_MS, SessionBrokerError, VoiceSession, type GuideUiState, type RealtimeMode, type SessionBroker, type VoiceErrorKind } from "./voice-session.js";
+import { LEVEL_BAR_COUNT, formatElapsed, startVoiceCapture, type VoiceCapture } from "./voice-capture.js";
 
 type SetupState = "booting" | "helper-missing" | "permission-needed" | "key-missing" | "demo" | "ready";
 type ToolbarState = "Ready" | "Guiding" | "Listening" | "Paused" | "Unavailable";
@@ -67,9 +68,9 @@ const MODE_LABELS: Record<GuideMode, string> = {
 };
 
 const MODE_HINTS: Record<GuideMode, string> = {
-  ask: "Explain the page in front of you",
+  ask: "Explain what is on this page",
   find: "Point to the right control",
-  walkthrough: "One guided step at a time",
+  walkthrough: "Step-by-step, one control at a time",
 };
 
 const PLACEHOLDERS: Record<GuideMode, string> = {
@@ -109,6 +110,8 @@ function BrowserGuideApp(): React.ReactElement {
   const [speakAnswers, setSpeakAnswers] = useState(false);
   const [agentEyes, setAgentEyes] = useState(false);
   const [demoActive, setDemoActive] = useState(false);
+  const [levels, setLevels] = useState<readonly number[]>(() => new Array<number>(LEVEL_BAR_COUNT).fill(0));
+  const [recordingMs, setRecordingMs] = useState(0);
   const demoStateRef = useRef<{ stepIndex: number } | null>(null);
   const [keyPresent, setKeyPresent] = useState(false);
   const [keyBusy, setKeyBusy] = useState(false);
@@ -132,6 +135,8 @@ function BrowserGuideApp(): React.ReactElement {
   const lastTurnTyped = useRef(false);
   const speakAnswersRef = useRef(false);
   const voiceStateRef = useRef<GuideUiState>("idle");
+  const captureRef = useRef<VoiceCapture | null>(null);
+  const recordingTickRef = useRef<number | null>(null);
   const transientKeyInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -485,6 +490,47 @@ function BrowserGuideApp(): React.ReactElement {
     }, decision.delayMs);
   }, [session]);
 
+  const endCapture = useCallback((discard: boolean) => {
+    if (recordingTickRef.current !== null) {
+      window.clearInterval(recordingTickRef.current);
+      recordingTickRef.current = null;
+    }
+    const capture = captureRef.current;
+    captureRef.current = null;
+    setLevels(new Array<number>(LEVEL_BAR_COUNT).fill(0));
+    setRecordingMs(0);
+    if (!capture) return;
+    if (discard) capture.cancel();
+    else void capture.stop().catch(() => undefined);
+  }, []);
+
+  const beginCapture = useCallback(async () => {
+    const stream = session.microphoneStream;
+    if (!stream) return;
+    try {
+      // The meter reads the same stream the model hears, so a flat bar always
+      // means the microphone, not the visualisation.
+      captureRef.current = await startVoiceCapture(stream, { onLevel: (next) => setLevels([...next]) });
+    } catch {
+      // A missing AudioContext only costs the meter, never the recording.
+      return;
+    }
+    setRecordingMs(0);
+    recordingTickRef.current = window.setInterval(() => {
+      setRecordingMs(captureRef.current?.elapsedMs() ?? 0);
+    }, 200);
+  }, [session]);
+
+  const sendRecording = useCallback(() => {
+    endCapture(false);
+    session.stopListening();
+  }, [endCapture, session]);
+
+  const cancelRecording = useCallback(() => {
+    endCapture(true);
+    session.cancelListening();
+  }, [endCapture, session]);
+
   const openMicrophoneGuide = useCallback(() => {
     window.open(chrome.runtime.getURL("welcome.html#microphone"));
   }, []);
@@ -492,7 +538,7 @@ function BrowserGuideApp(): React.ReactElement {
   const toggleListening = useCallback(async () => {
     if (setup !== "ready" || demoStateRef.current) return;
     if (voiceState === "listening") {
-      session.stopListening();
+      sendRecording();
       return;
     }
     if (startingVoice.current || submittingQuestion.current || continuingWalkthrough.current || session.busy) return;
@@ -528,12 +574,13 @@ function BrowserGuideApp(): React.ReactElement {
       activeVoiceMode.current = mode;
       voiceContextOrigin.current = context.origin;
       await session.startListening(context, mode);
+      await beginCapture();
     } catch {
       // VoiceSession emits a cause-specific error and always closes partial media.
     } finally {
       startingVoice.current = false;
     }
-  }, [capturePage, mode, openMicrophoneGuide, session, setup, voiceState]);
+  }, [beginCapture, capturePage, mode, openMicrophoneGuide, sendRecording, session, setup, voiceState]);
 
   const toggleListeningRef = useRef(toggleListening);
   toggleListeningRef.current = toggleListening;
@@ -1004,6 +1051,7 @@ function BrowserGuideApp(): React.ReactElement {
   }
 
   const pagePaused = runtime.status === "permission-paused";
+  const isRecording = voiceState === "listening";
   const inDemo = setup === "demo";
   const composerLocked = pagePaused || inDemo || demoActive;
   return (
@@ -1052,7 +1100,6 @@ function BrowserGuideApp(): React.ReactElement {
         {walkthrough && (
           <section className="guide-card" aria-label={`Walkthrough step ${walkthrough.step}`}>
             <div className="guide-card-head">
-              <CompassMascot phase={walkthrough.phase} />
               <span className="guide-eyebrow">{walkthroughEyebrow(walkthrough)}</span>
             </div>
             <div className="guide-card-copy">
@@ -1081,7 +1128,7 @@ function BrowserGuideApp(): React.ReactElement {
           {entries.length === 0 && !walkthrough && (
             <div className="empty-instrument">
               <span className="empty-beacon" aria-hidden="true"><i /></span>
-              <h1>What do you need?</h1>
+              <h1>Ask about this page</h1>
               <div className="intent-launcher" aria-label="Guide modes">
                 {(["ask", "find", "walkthrough"] as const).map((value) => (
                   <button key={value} type="button" disabled={inDemo} onClick={() => {
@@ -1103,7 +1150,7 @@ function BrowserGuideApp(): React.ReactElement {
                 ))}
               </div>
               <button type="button" className="practice-link" onClick={() => void startDemoTour()}>
-                Practice tour — a guided demo on a safe page
+                Take the guided tour on a practice page
               </button>
               <p className="brand-line">
                 <a href="https://www.crawlio.app" target="_blank" rel="noreferrer">by Crawlio</a>
@@ -1171,6 +1218,14 @@ function BrowserGuideApp(): React.ReactElement {
             <span>Eyes</span>
           </label>
         </div>
+        {isRecording ? (
+          <RecordingBar
+            levels={levels}
+            elapsedMs={recordingMs}
+            onCancel={cancelRecording}
+            onSend={sendRecording}
+          />
+        ) : (
         <form className="composer" onSubmit={(event) => {
           event.preventDefault();
           void submitQuestion();
@@ -1178,9 +1233,8 @@ function BrowserGuideApp(): React.ReactElement {
           <button
             className="voice-beacon"
             type="button"
-            aria-label={voiceState === "listening" ? "Stop listening" : "Ask by voice"}
-            aria-pressed={voiceState === "listening"}
-            title="Voice · ⌘⇧G"
+            aria-label="Ask by voice"
+            title="Ask by voice · ⌘⇧G"
             disabled={composerLocked || voiceState === "thinking" || voiceState === "speaking" || voiceState === "pointing"}
             onClick={() => void toggleListening()}
           >
@@ -1205,6 +1259,7 @@ function BrowserGuideApp(): React.ReactElement {
           />
           <button className="send-button" type="submit" aria-label={`Send ${MODE_LABELS[mode].toLowerCase()} request`} disabled={!question.trim() || pagePaused}>↑</button>
         </form>
+        )}
       </footer>
     </main>
   );
@@ -1244,6 +1299,47 @@ function InstallCommandRow(): React.ReactElement {
           }}
         >{copied ? "Copied" : "Copy"}</button>
       </div>
+    </div>
+  );
+}
+
+function RecordingBar(props: {
+  levels: readonly number[];
+  elapsedMs: number;
+  onCancel(): void;
+  onSend(): void;
+}): React.ReactElement {
+  const remainingMs = Math.max(0, MAX_RECORDING_MS - props.elapsedMs);
+  const endingSoon = remainingMs <= 10_000;
+  return (
+    <div className="recorder" role="group" aria-label="Recording">
+      <p className="sr-only" role="status">Recording. Press send when you finish speaking.</p>
+      <button
+        type="button"
+        className="recorder-cancel"
+        onClick={props.onCancel}
+        aria-label="Discard recording"
+        title="Discard"
+      >
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+      </button>
+      <div className="recorder-wave" aria-hidden="true">
+        {props.levels.map((level, index) => (
+          <i key={index} style={{ transform: `scaleY(${Math.max(0.08, level).toFixed(3)})` }} />
+        ))}
+      </div>
+      <span className={`recorder-time${endingSoon ? " ending" : ""}`}>
+        {endingSoon ? `-${formatElapsed(remainingMs)}` : formatElapsed(props.elapsedMs)}
+      </span>
+      <button
+        type="button"
+        className="recorder-send"
+        onClick={props.onSend}
+        aria-label="Send recording"
+        title="Send"
+      >
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15.5V4.8M5.4 9.4 10 4.6l4.6 4.8" /></svg>
+      </button>
     </div>
   );
 }
@@ -1303,40 +1399,12 @@ function SetupView(props: SetupViewProps): React.ReactElement {
 }
 
 function walkthroughEyebrow(walkthrough: WalkthroughSession): string {
-  if (walkthrough.phase === "complete") return "All done — you did it!";
-  if (walkthrough.phase === "paused") return `Step ${walkthrough.step} · taking a breather`;
-  if (walkthrough.step <= 1) return "Step 1 · let's go";
-  return `Step ${walkthrough.step} · nice pace`;
+  if (walkthrough.phase === "complete") return "Walkthrough complete";
+  if (walkthrough.phase === "paused") return `Step ${walkthrough.step} · paused`;
+  if (walkthrough.step <= 1) return "Step 1";
+  return `Step ${walkthrough.step}`;
 }
 
-function CompassMascot({ phase }: { phase: WalkthroughSession["phase"] }): React.ReactElement {
-  const variant = phase === "complete" ? "happy" : phase === "paused" ? "asleep" : "awake";
-  return (
-    <svg className={`walk-mascot ${variant}`} viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="13" r="8.6" fill="var(--paper)" stroke="var(--emerald)" strokeWidth="1.6" />
-      <path d="M12 1.6 L13.8 5.4 L10.2 5.4 Z" fill="var(--emerald)" />
-      {variant === "asleep" ? (
-        <>
-          <path d="M8.2 11.9 H10.4" stroke="var(--ink)" strokeWidth="1.2" strokeLinecap="round" fill="none" />
-          <path d="M13.6 11.9 H15.8" stroke="var(--ink)" strokeWidth="1.2" strokeLinecap="round" fill="none" />
-          <path d="M9.8 15.4 Q12 16.2 14.2 15.4" fill="none" stroke="var(--ink)" strokeWidth="1.1" strokeLinecap="round" />
-        </>
-      ) : (
-        <>
-          <circle className="walk-mascot-eye" cx="9.3" cy="11.6" r="1.15" fill="var(--ink)" />
-          <circle className="walk-mascot-eye" cx="14.7" cy="11.6" r="1.15" fill="var(--ink)" />
-          <path
-            d={variant === "happy" ? "M9 14.6 Q12 17.6 15 14.6" : "M9.5 15 Q12 17 14.5 15"}
-            fill="none"
-            stroke="var(--ink)"
-            strokeWidth="1.2"
-            strokeLinecap="round"
-          />
-        </>
-      )}
-    </svg>
-  );
-}
 
 function ModeIcon({ mode }: { mode: GuideMode }): React.ReactElement {
   if (mode === "ask") return <span className="mode-icon" aria-hidden="true">?</span>;
@@ -1370,9 +1438,9 @@ function ToolbarIcon({ kind }: { kind: "reset" | "key" | "memory" }): React.Reac
 
 function setupCopy(state: SetupState): { kicker: string; title: string; line: string; privacy: string } {
   switch (state) {
-    case "booting": return { kicker: "Local", title: "One moment", line: "Checking this Mac.", privacy: "Nothing leaves Chrome yet." };
-    case "helper-missing": return { kicker: "One-time setup", title: "Open the helper", line: "Run Browser Guide Helper once, then return here.", privacy: "Local to this Mac." };
-    case "permission-needed": return { kicker: "One-time setup", title: "Allow the helper", line: "Chrome needs permission to reach the local app.", privacy: "Exact extension only." };
+    case "booting": return { kicker: "Local", title: "Checking setup", line: "Looking for the local helper on this computer.", privacy: "Nothing leaves Chrome yet." };
+    case "helper-missing": return { kicker: "One-time setup", title: "Install the helper", line: "One command installs the local helper. Everything stays on this computer.", privacy: "Local to this computer." };
+    case "permission-needed": return { kicker: "One-time setup", title: "Allow the helper", line: "Chrome needs permission to reach the local helper.", privacy: "This extension only." };
     case "key-missing": return { kicker: "Final step", title: "Connect a credential", line: "Use an existing harness sign-in, or paste a key. Stored locally, never in Chrome.", privacy: "Saved to a private local file." };
     case "demo":
     case "ready": return { kicker: "", title: "", line: "", privacy: "" };
