@@ -4,20 +4,29 @@ import type { GuidanceCommand, ShowGuidanceCommand } from "../../shared/assistan
 import { contextForModel, isPageContext, type PageContext } from "../../shared/page-context.js";
 import { sanitizePageContext } from "../../shared/sanitization.js";
 import {
+  isHostCompleteResponse,
   isHostConfigureResponse,
   isHostCreateSessionResponse,
   isHostCredentialSourcesResponse,
+  isHostTranscribeResponse,
   isHostForgetResponse,
   isHostHealthResponse,
   isHostImportResponse,
   isHostMemoryClearResponse,
   isHostMemoryGetResponse,
   isWebOrigin,
+  type CompletionMessage,
   type CredentialProvider,
   type NativeAccountIdentity,
   type NativeCredentialSource,
   type SiteMemoryNote,
 } from "../../shared/native-protocol.js";
+import {
+  CompletionBrokerError,
+  LocalClaudeSession,
+  type CompletionBroker,
+  type CompletionResponseBlock,
+} from "./claude-session.js";
 import {
   isCaptureResponse,
   isExtensionRuntimeState,
@@ -31,7 +40,7 @@ import {
 } from "../../shared/protocol.js";
 import { WalkthroughCoordinator } from "../../shared/walkthrough.js";
 import { DEMO_TOUR_GOAL, isPracticePage, resolveDemoStep } from "./demo-tour.js";
-import { MAX_RECORDING_MS, SessionBrokerError, VoiceSession, type GuideUiState, type RealtimeMode, type SessionBroker, type VoiceErrorKind } from "./voice-session.js";
+import { MAX_RECORDING_MS, SessionBrokerError, VoiceSession, type GuideUiState, type RealtimeMode, type SessionBroker, type VoiceErrorKind, type VoiceSessionCallbacks } from "./voice-session.js";
 import { formatElapsed, startVoiceCapture, type VoiceCapture } from "./voice-capture.js";
 
 /**
@@ -42,6 +51,13 @@ import { formatElapsed, startVoiceCapture, type VoiceCapture } from "./voice-cap
  * that was never the problem.
  */
 type SetupState = "booting" | "helper-missing" | "helper-unreachable" | "permission-needed" | "key-missing" | "demo" | "ready";
+
+/**
+ * Which credential answers. "realtime" is OpenAI over WebRTC; "claude" is the
+ * Anthropic sign-in this computer already holds, relayed by the helper. The
+ * product is the same either way, and the panel never asks anyone to choose.
+ */
+type GuideEngine = "realtime" | "claude";
 type ToolbarState = "Ready" | "Guiding" | "Listening" | "Paused" | "Not shared" | "Demo" | "Unavailable";
 
 interface ConversationEntry {
@@ -102,6 +118,39 @@ const PLACEHOLDERS: Record<GuideMode, string> = {
 const TOUR_GOAL = "Show me around this page";
 const PRACTICE_URL = "https://docs.crawlio.app/browser-guide/practice";
 
+/**
+ * The Claude engine's transport. Both calls go to the local helper, which
+ * holds the credential and relays them; the panel never sees a token, exactly
+ * as with Realtime.
+ */
+class RuntimeCompletionBroker implements CompletionBroker {
+  async complete(messages: CompletionMessage[]): Promise<{ content: CompletionResponseBlock[]; stopReason: string }> {
+    const response = await runtimeSend<unknown>({ type: "GUIDE_HOST_COMPLETE", messages });
+    if (!isHostCompleteResponse(response) || !response.ok) {
+      const code = isRecord(response) && typeof response.code === "string" ? response.code : "INVALID_RESPONSE";
+      throw new CompletionBrokerError(
+        hostFailureKind(code),
+        code,
+        hostError(response, "The local helper could not reach Claude."),
+      );
+    }
+    return { content: response.content as CompletionResponseBlock[], stopReason: response.stopReason };
+  }
+
+  async transcribe(wavBase64: string): Promise<string> {
+    const response = await runtimeSend<unknown>({ type: "GUIDE_HOST_TRANSCRIBE", audio: wavBase64, format: "wav" });
+    if (!isHostTranscribeResponse(response) || !response.ok) {
+      const code = isRecord(response) && typeof response.code === "string" ? response.code : "INVALID_RESPONSE";
+      throw new CompletionBrokerError(
+        hostFailureKind(code),
+        code,
+        hostError(response, "Speech could not be transcribed on this computer."),
+      );
+    }
+    return response.transcript;
+  }
+}
+
 class RuntimeSessionBroker implements SessionBroker {
   async createSession(sdp: string, mode: RealtimeMode): Promise<string> {
     const response = await runtimeSend<unknown>({ type: "GUIDE_HOST_CREATE_SESSION", sdp, mode });
@@ -135,6 +184,8 @@ function BrowserGuideApp(): React.ReactElement {
   const [keyPresent, setKeyPresent] = useState(false);
   const [keyBusy, setKeyBusy] = useState(false);
   const [account, setAccount] = useState<NativeAccountIdentity | null>(null);
+  /** Which engine answers. Chosen once per health check, never by the user. */
+  const [engine, setEngine] = useState<GuideEngine>("realtime");
   /** Null until asked, and after a helper too old to answer: both mean "show every option". */
   const [sources, setSources] = useState<NativeCredentialSource[] | null>(null);
   /**
@@ -172,6 +223,7 @@ function BrowserGuideApp(): React.ReactElement {
   const refreshTimer = useRef<number | null>(null);
   const walkthroughDeadlineTimer = useRef<number | null>(null);
   const advanceWalkthroughRef = useRef<() => Promise<void>>(async () => undefined);
+  const lastVoiceContext = useRef<PageContext | null>(null);
   const submittingQuestion = useRef(false);
   const startingVoice = useRef(false);
   const continuingWalkthrough = useRef(false);
@@ -180,6 +232,7 @@ function BrowserGuideApp(): React.ReactElement {
   voiceStateRef.current = voiceState;
 
   const broker = useMemo(() => new RuntimeSessionBroker(), []);
+  const completionBroker = useMemo(() => new RuntimeCompletionBroker(), []);
 
   const updateEntry = useCallback((id: string, updater: (entry: ConversationEntry) => ConversationEntry) => {
     setEntries((current) => current.map((entry) => entry.id === id ? updater(entry) : entry));
@@ -189,7 +242,7 @@ function BrowserGuideApp(): React.ReactElement {
     setEntries((current) => [...current, entry].slice(-30));
   }, []);
 
-  const session = useMemo(() => new VoiceSession(broker, {
+  const sessionCallbacks = useMemo<VoiceSessionCallbacks>(() => ({
     onState: setVoiceState,
     onUserTranscript(text, final) {
       let id = voiceEntryId.current;
@@ -308,7 +361,23 @@ function BrowserGuideApp(): React.ReactElement {
       finalAssistantText.current = "";
       activeTurnQuestion.current = "";
     },
-  }), [appendEntry, broker, updateEntry]);
+  }), [appendEntry, updateEntry]);
+
+  /**
+   * One conversation, two engines. Realtime when an OpenAI credential is
+   * configured; otherwise the Claude sign-in already on this computer, relayed
+   * by the helper. Both implement the same turn contract, so everything below
+   * this line is engine-agnostic.
+   */
+  const session = useMemo(
+    () => engine === "claude"
+      ? new LocalClaudeSession(completionBroker, sessionCallbacks)
+      : new VoiceSession(broker, sessionCallbacks),
+    [broker, completionBroker, engine, sessionCallbacks],
+  );
+
+  // Swapping engines must not leave the previous one holding a live session.
+  useEffect(() => () => { void session.close(); }, [session]);
 
   const toggleSpeakAnswers = useCallback(() => {
     setSpeakAnswers((current) => {
@@ -365,7 +434,19 @@ function BrowserGuideApp(): React.ReactElement {
         return;
       }
       setAccount(response.health.account ?? null);
-      setSetup(response.health.configured === true ? "ready" : "key-missing");
+      // An OpenAI credential means Realtime. Otherwise a Claude sign-in is a
+      // complete product on its own, the way a ChatGPT plan is for Codex and
+      // a claude.ai account is for Claude in Chrome: the subscription answers,
+      // and nobody is asked for an API key.
+      if (response.health.configured === true) {
+        setEngine("realtime");
+        setSetup("ready");
+      } else if (response.health.claude === true) {
+        setEngine("claude");
+        setSetup("ready");
+      } else {
+        setSetup("key-missing");
+      }
     } catch (error) {
       if (epoch !== authEpoch.current) return;
       setSetup("helper-unreachable");
@@ -574,15 +655,23 @@ function BrowserGuideApp(): React.ReactElement {
   }, []);
 
   const beginCapture = useCallback(async () => {
-    const stream = session.microphoneStream;
-    if (!stream) return;
     setRecordingMs(0);
+    // Realtime streams the microphone itself and lends us the stream to draw.
+    // The Claude engine transcribes on this computer, so the panel opens the
+    // microphone, keeps the samples, and owns closing it.
+    const borrowed = session instanceof VoiceSession ? session.microphoneStream : null;
+    if (session instanceof VoiceSession && !borrowed) return;
     try {
+      const stream = borrowed ?? await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       // The waveform reads the same stream the model hears, so a flat strip
       // always means the microphone, not the visualisation.
       captureRef.current = await startVoiceCapture(stream, {
         canvas: waveformRef.current,
         onSecond: setRecordingMs,
+        recordPcm: borrowed === null,
+        ownsStream: borrowed === null,
       });
     } catch {
       // A missing AudioContext only costs the waveform, never the recording.
@@ -590,6 +679,24 @@ function BrowserGuideApp(): React.ReactElement {
   }, [session]);
 
   const sendRecording = useCallback(() => {
+    if (session instanceof LocalClaudeSession) {
+      const capture = captureRef.current;
+      const context = lastVoiceContext.current;
+      captureRef.current = null;
+      setRecordingMs(0);
+      if (!capture || !context) {
+        session.cancelListening();
+        return;
+      }
+      void capture.stop().then(async (wav) => {
+        if (!wav) {
+          session.cancelListening();
+          return;
+        }
+        await session.submitRecording(base64FromBytes(wav), context);
+      }).catch(() => session.cancelListening());
+      return;
+    }
     endCapture(false);
     session.stopListening();
   }, [endCapture, session]);
@@ -643,6 +750,9 @@ function BrowserGuideApp(): React.ReactElement {
       lastTurnTyped.current = false;
       activeVoiceMode.current = mode;
       voiceContextOrigin.current = context.origin;
+      // The Claude engine answers after the recording ends, so the evidence
+      // this turn opened with has to survive until then.
+      lastVoiceContext.current = context;
       await session.startListening(context, mode);
       await beginCapture();
     } catch {
@@ -840,6 +950,11 @@ function BrowserGuideApp(): React.ReactElement {
       }
       if (response.account) setAccount(response.account);
       if (response.configured) {
+        setEngine("realtime");
+        setSetup("ready");
+      } else if (response.provider === "claude-code") {
+        // The sign-in that just landed is enough to run the whole product.
+        setEngine("claude");
         setSetup("ready");
       } else {
         // The import worked. Saying so in red taught people that a button that
@@ -1493,6 +1608,15 @@ function expiryNotice(account: NativeAccountIdentity | null): string | null {
 
 const INSTALL_COMMAND = "npx crawlio-browser-guide init";
 const OPENAI_KEYS_URL = "https://platform.openai.com/api-keys";
+
+/** WAV bytes to base64, in chunks so a long recording cannot blow the stack. */
+function base64FromBytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
 
 function InstallCommandRow(): React.ReactElement {
   const [copied, setCopied] = useState(false);
