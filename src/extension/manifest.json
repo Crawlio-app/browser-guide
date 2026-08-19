@@ -6,8 +6,16 @@
   "description": "A read-only voice and visual guide for the page you choose to share. It explains and points - it never acts.",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtetNCafSn9HTZ55s1ac660CqQym9nHoZl9PJZVDoBnpMdvC+Hehwq6XYh+/SvfKcuFIbPdMIYRn8tJTYokgO9cLN3zenmtJZKgeVC2tryqt93hP4NaUJ7fLj0mTedBvaoIcblLPH5c2Pmkr6BPwsRUxi5xABWDh5YRGfYszEmAMdPeMdHf9AHC/vSR1rb2q6inHcJUcSbkR3Sbh9XWrVLRVyrfXQA/ss7wkRwAiIVOQORPAf+kDFpLqePsxVv2TwhyFRI4VHFTp9A9ImMgoCDwWSdPVd0Z+Mj/PU8ykitIz77ryjdChhjvQ0zubuaB/sY2hOb4yDklzCStrJy1aWCwIDAQAB",
-  "permissions": ["activeTab", "scripting", "storage", "sidePanel"],
-  "optional_permissions": ["nativeMessaging"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "sidePanel",
+    "tabGroups"
+  ],
+  "optional_permissions": [
+    "nativeMessaging"
+  ],
   "background": {
     "service_worker": "service-worker.js"
   },

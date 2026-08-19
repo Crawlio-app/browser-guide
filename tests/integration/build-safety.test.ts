@@ -28,7 +28,13 @@ describe("built extension safety surface", () => {
       key?: string;
       content_security_policy?: { extension_pages?: string };
     };
-    expect(manifest.permissions).toEqual(["activeTab", "scripting", "storage", "sidePanel"]);
+    // Exact, so widening the surface is always a deliberate edit here.
+    // tabGroups only names and colours the tab that is already shared; it
+    // grants no access to any page and no ability to act on one, and it is
+    // what makes the shared tab visible from the tab strip.
+    expect(manifest.permissions).toEqual(["activeTab", "scripting", "storage", "sidePanel", "tabGroups"]);
+    // Reading or acting on tabs is a different matter and stays out.
+    expect(manifest.permissions).not.toContain("tabs");
     expect(manifest.optional_permissions).toEqual(["nativeMessaging"]);
     expect(manifest.host_permissions ?? []).toEqual([]);
     expect(manifest.optional_host_permissions ?? []).toEqual([]);

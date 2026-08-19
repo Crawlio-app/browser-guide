@@ -676,8 +676,36 @@ async function updateState(patch: Partial<ExtensionRuntimeState>): Promise<void>
  * the same thing visible by putting the tab it has taken into a named group;
  * a per-tab badge says the same thing without asking for a new permission.
  */
+/**
+ * Puts the shared tab in a named, coloured group, which is how Claude in
+ * Chrome shows which tab it has taken. Nothing is grouped until a tab is
+ * actually shared, and the group is dissolved the moment it is not.
+ */
+function groupSharedTab(tabId: number, shared: boolean): void {
+  try {
+    if (!shared) {
+      chrome.tabs.ungroup?.(tabId, () => {
+        void chrome.runtime.lastError;
+      });
+      return;
+    }
+    chrome.tabs.group?.({ tabIds: tabId }, (groupId) => {
+      if (chrome.runtime.lastError || groupId === undefined) {
+        void chrome.runtime.lastError;
+        return;
+      }
+      chrome.tabGroups?.update?.(groupId, { title: "Browser Guide", color: "blue" }, () => {
+        void chrome.runtime.lastError;
+      });
+    });
+  } catch {
+    // Grouping is a courtesy; the badge below still says which tab it is.
+  }
+}
+
 function markSharedTab(tabId: number | undefined, shared: boolean): void {
   if (tabId === undefined) return;
+  groupSharedTab(tabId, shared);
   // Every call here is decoration. A tab that closed mid-update, or a Chrome
   // build without one of these, must never be able to fail an activation.
   try {
