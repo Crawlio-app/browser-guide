@@ -74,17 +74,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            observation: false
-          # Windows is in observation mode until this leg has been seen green:
-          # it has never run anywhere before, and blocking main on a platform
-          # with zero prior runs would be gambling, not verification. Promote
-          # by deleting the observation flag once it passes.
-          - os: windows-latest
-            observation: true
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.observation }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
