@@ -4,6 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Bit-rot watch: a weekly run catches a Chromium or dependency drift while
+  # the repo sleeps, instead of surprising the next real push.
+  schedule:
+    - cron: "17 12 * * 1"
+  workflow_dispatch:
+
+# Only the tip of a branch matters on a sole-committer repo; superseded runs
+# are cancelled rather than queued behind each other.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
@@ -11,7 +22,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select latest Xcode 16
         run: |
@@ -19,9 +30,9 @@ jobs:
           if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
           swift --version
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -55,3 +66,39 @@ jobs:
 
       - name: Chrome end-to-end tests
         run: npm run test:e2e
+
+  # The npm package promises Windows and Linux. This job is that promise,
+  # tested: the Node helper must pass the exact conformance suite the Swift
+  # host passes, on the platforms that have no Swift host.
+  node-host:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            observation: false
+          # Windows is in observation mode until this leg has been seen green:
+          # it has never run anywhere before, and blocking main on a platform
+          # with zero prior runs would be gambling, not verification. Promote
+          # by deleting the observation flag once it passes.
+          - os: windows-latest
+            observation: true
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.observation }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Node host conformance
+        run: npm run test:native:node
+
+      - name: MCP server tests
+        run: npm --prefix mcp ci && npm run test:mcp

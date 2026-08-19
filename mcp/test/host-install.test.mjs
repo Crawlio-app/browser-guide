@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,7 +66,7 @@ test("uninstall removes registration and eyes snapshot, leaves nothing, and is i
   t.after(() => rmSync(home, { recursive: true, force: true }));
   installHost(fakeBinary(home), home);
   const paths = hostPaths(home);
-  execFileSync("mkdir", ["-p", join(home, ".config", "browser-guide")]);
+  mkdirSync(join(home, ".config", "browser-guide"), { recursive: true });
   writeFileSync(paths.eyesPath, "{}");
 
   uninstallHost(home);

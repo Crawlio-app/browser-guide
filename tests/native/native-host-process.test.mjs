@@ -304,7 +304,10 @@ function exchangeUntilMessageCount(requests, expectedCount, executable = host, e
 
 function exchangeInStages(requestStages, expectedCount, executable = host, environment = process.env) {
   return new Promise((resolveExchange, reject) => {
-    const child = spawn(executable, [], {
+    // A .js host cannot be spawned directly on Windows, where scripts are
+    // not executables; run it through the Node that is running this test.
+    const viaNode = executable.endsWith(".js");
+    const child = spawn(viaNode ? process.execPath : executable, viaNode ? [executable] : [], {
       env: environment,
       stdio: ["pipe", "pipe", "pipe"],
     });

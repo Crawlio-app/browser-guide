@@ -21,7 +21,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:native": "swift test --package-path native/macos && node --test tests/native/native-host-process.test.mjs",
-    "test:native:node": "BROWSER_GUIDE_NATIVE_HOST=mcp/bin/host.js node --test tests/native/native-host-process.test.mjs",
+    "test:native:node": "node scripts/run-node-host-tests.mjs",
     "pretest:e2e": "npm run build:extension",
     "test:e2e": "vitest run tests/e2e --no-file-parallelism",
     "smoke:live": "node scripts/live-smoke.mjs",

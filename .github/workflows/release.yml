@@ -1,0 +1,51 @@
+name: Release artifacts
+
+# Tag-driven, zero-secret. Signing and npm publish stay on the release
+# machine on purpose: the Developer ID identity and the npm session never
+# enter CI, so this pipeline has nothing to leak. What CI CAN do without
+# secrets is prove the gate on the exact tagged commit and attach an
+# auditable Chrome Web Store zip to a GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select latest Xcode 16
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          swift --version
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full gate on the tagged commit
+        run: |
+          npx playwright-core install chromium || npx playwright install chromium || true
+          npm run verify:product
+
+      - name: Build the Chrome Web Store zip
+        run: npm run package:cws
+
+      - name: Attach the zip to a GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ZIP=$(ls dist/*.zip | head -1)
+          gh release create "${GITHUB_REF_NAME}" "$ZIP" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Chrome Web Store artifact built from ${GITHUB_SHA} with the full gate green. Signing and npm publish happen on the release machine; see docs/store/cws-listing.md for submission."
