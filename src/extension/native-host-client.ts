@@ -177,8 +177,12 @@ export class NativeHostClient {
     return this.runBounded(request, NATIVE_TIMEOUT_MS.evidence);
   }
 
-  transcribe(audio: string): Promise<NativeTranscribeData> {
-    const request = this.makeRequest("HOST_TRANSCRIBE", { audio, format: "wav" });
+  transcribe(audio: string, locale?: string): Promise<NativeTranscribeData> {
+    const request = this.makeRequest("HOST_TRANSCRIBE", {
+      audio,
+      format: "wav",
+      ...(locale ? { locale } : {}),
+    });
     return this.runBounded(request, NATIVE_TIMEOUT_MS.transcribe);
   }
 
@@ -237,7 +241,7 @@ export class NativeHostClient {
   private makeRequest(type: "HOST_CLEAR_EVIDENCE"): Extract<NativeHostRequest, { type: "HOST_CLEAR_EVIDENCE" }>;
   private makeRequest(
     type: "HOST_TRANSCRIBE",
-    payload: { audio: string; format: "wav" },
+    payload: { audio: string; format: "wav"; locale?: string },
   ): Extract<NativeHostRequest, { type: "HOST_TRANSCRIBE" }>;
   private makeRequest(
     type: "HOST_COMPLETE",
@@ -251,7 +255,7 @@ export class NativeHostClient {
       | { origin: string }
       | { origin: string; question: string; answer: string }
       | { origin: string; title: string; evidence: string }
-      | { audio: string; format: "wav" }
+      | { audio: string; format: "wav"; locale?: string }
       | { messages: CompletionMessage[] },
   ): NativeHostRequest {
     const requestId = this.createRequestId();
@@ -315,7 +319,7 @@ export class NativeHostClient {
           version: NATIVE_PROTOCOL_VERSION,
           requestId,
           type,
-          payload: payload as { audio: string; format: "wav" },
+          payload: payload as { audio: string; format: "wav"; locale?: string },
         };
         break;
       case "HOST_COMPLETE":

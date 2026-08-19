@@ -103,6 +103,12 @@ const MODE_LABELS: Record<GuideMode, string> = {
  */
 const UNREACHABLE_RETRY_DELAYS_MS = [500, 1_500, 4_000, 8_000];
 
+/**
+ * Loudest sample below which a recording is treated as silence. Room tone and
+ * a muted input sit well under this; even quiet speech goes over it.
+ */
+const SILENT_RECORDING_PEAK = 0.01;
+
 const MODE_HINTS: Record<GuideMode, string> = {
   ask: "Explain what is on this page",
   find: "Point to the right control",
@@ -138,7 +144,15 @@ class RuntimeCompletionBroker implements CompletionBroker {
   }
 
   async transcribe(wavBase64: string): Promise<string> {
-    const response = await runtimeSend<unknown>({ type: "GUIDE_HOST_TRANSCRIBE", audio: wavBase64, format: "wav" });
+    // The recogniser needs to be told what language to expect. Left to its
+    // default it assumes US English, so a question asked in any other language
+    // comes back as plausible-looking nonsense, or as nothing at all.
+    const response = await runtimeSend<unknown>({
+      type: "GUIDE_HOST_TRANSCRIBE",
+      audio: wavBase64,
+      format: "wav",
+      ...(spokenLocale() ? { locale: spokenLocale() } : {}),
+    });
     if (!isHostTranscribeResponse(response) || !response.ok) {
       const code = isRecord(response) && typeof response.code === "string" ? response.code : "INVALID_RESPONSE";
       throw new CompletionBrokerError(
@@ -688,12 +702,15 @@ function BrowserGuideApp(): React.ReactElement {
         session.cancelListening();
         return;
       }
+      // Read the level before stopping: it is what distinguishes a microphone
+      // that heard nothing from speech the recogniser could not resolve.
+      const heardSound = capture.peakLevel() > SILENT_RECORDING_PEAK;
       void capture.stop().then(async (wav) => {
         if (!wav) {
           session.cancelListening();
           return;
         }
-        await session.submitRecording(base64FromBytes(wav), context);
+        await session.submitRecording(base64FromBytes(wav), context, heardSound);
       }).catch(() => session.cancelListening());
       return;
     }
@@ -1639,6 +1656,16 @@ function expiryNotice(account: NativeAccountIdentity | null): string | null {
 
 const INSTALL_COMMAND = "npx crawlio-browser-guide init";
 const OPENAI_KEYS_URL = "https://platform.openai.com/api-keys";
+
+/**
+ * The language to transcribe in: what this browser is set to. It is the best
+ * signal available without asking, and it is right far more often than the
+ * hardcoded US English it replaces.
+ */
+function spokenLocale(): string | undefined {
+  const tag = navigator.language?.trim();
+  return tag && /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/.test(tag) ? tag : undefined;
+}
 
 /** WAV bytes to base64, in chunks so a long recording cannot blow the stack. */
 function base64FromBytes(bytes: Uint8Array): string {

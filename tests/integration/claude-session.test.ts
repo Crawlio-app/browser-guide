@@ -158,16 +158,26 @@ describe("LocalClaudeSession", () => {
     expect(harness.states).toEqual(["listening", "thinking", "speaking", "idle"]);
   });
 
-  it("drops a recording that captured no speech without asking anything", async () => {
-    const harness = createHarness([], { ok: true }, "   ");
+  it("says why a recording produced nothing, instead of ignoring it", async () => {
+    // A silent microphone and speech the recogniser could not resolve are
+    // different problems with different fixes, so they get different messages.
+    // Neither is worth spending a completion on.
+    const silent = createHarness([], { ok: true }, "   ");
     const context = makeContext();
-    await harness.session.startListening(context, "ask");
-    await harness.session.submitRecording("UklGRiQAAABXQVZF", context);
+    await silent.session.startListening(context, "ask");
+    await silent.session.submitRecording("UklGRiQAAABXQVZF", context, false);
 
-    expect(harness.requests).toEqual([]);
-    expect(harness.errors).toEqual([]);
-    expect(harness.turns.at(-1)?.status).toBe("superseded");
-    expect(harness.session.busy).toBe(false);
+    expect(silent.requests).toEqual([]);
+    expect(silent.errors).toHaveLength(1);
+    expect(silent.errors[0]?.message).toContain("did not pick anything up");
+    expect(silent.errors[0]?.kind).toBe("microphone");
+    expect(silent.turns.at(-1)?.status).toBe("superseded");
+    expect(silent.session.busy).toBe(false);
+
+    const unclear = createHarness([], { ok: true }, "");
+    await unclear.session.startListening(makeContext(), "ask");
+    await unclear.session.submitRecording("UklGRiQAAABXQVZF", makeContext(), true);
+    expect(unclear.errors[0]?.message).toContain("could not be made out");
   });
 
   it("surfaces a helper failure as a failed turn the user can retry", async () => {

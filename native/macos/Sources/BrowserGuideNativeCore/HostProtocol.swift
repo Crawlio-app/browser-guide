@@ -49,7 +49,7 @@ public enum HostRequestPayload: Sendable, Equatable {
     case memoryAppend(origin: String, question: String, answer: String)
     case memoryClear(origin: String?)
     case publishEvidence(origin: String, title: String, evidence: String)
-    case transcribe(wavData: Data)
+    case transcribe(wavData: Data, locale: String?)
     case complete(messagesData: Data)
 }
 
@@ -200,7 +200,12 @@ public enum HostProtocolCodec {
             return HostRequest(requestID: requestID, type: type, payload: .memoryClear(origin: origin))
 
         case .transcribe:
-            let payload = try exactPayload(object["payload"], keys: ["audio", "format"], requestID: requestID)
+            let payload = try exactPayload(
+                object["payload"],
+                keys: ["audio", "format"],
+                optionalKeys: ["locale"],
+                requestID: requestID
+            )
             guard payload["format"] as? String == "wav",
                   let encoded = payload["audio"] as? String,
                   encoded.count <= BrowserGuideHostConstants.maximumTranscribeAudioBase64Chars,
@@ -209,7 +214,14 @@ public enum HostProtocolCodec {
                   wavData.prefix(4) == Data("RIFF".utf8) else {
                 throw invalid("The transcription payload is invalid.", requestID: requestID)
             }
-            return HostRequest(requestID: requestID, type: type, payload: .transcribe(wavData: wavData))
+            var locale: String?
+            if let requested = payload["locale"] {
+                guard let tag = requested as? String, isBCP47Locale(tag) else {
+                    throw invalid("The transcription payload is invalid.", requestID: requestID)
+                }
+                locale = tag
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .transcribe(wavData: wavData, locale: locale))
 
         case .complete:
             let payload = try exactPayload(object["payload"], keys: ["messages"], requestID: requestID)
@@ -282,12 +294,22 @@ public enum HostProtocolCodec {
             && (value.hasPrefix("v=0\r\n") || value.hasPrefix("v=0\n"))
     }
 
+    /// Optional keys exist for one reason: a field added after a helper
+    /// shipped must not make that helper reject the request. Required keys stay
+    /// exact, so nothing unrecognised slips through either way.
+    private static func isBCP47Locale(_ value: String) -> Bool {
+        value.range(of: #"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$"#, options: .regularExpression) != nil
+    }
+
     private static func exactPayload(
         _ rawPayload: Any?,
         keys: Set<String>,
+        optionalKeys: Set<String> = [],
         requestID: String
     ) throws -> [String: Any] {
-        guard let payload = rawPayload as? [String: Any], Set(payload.keys) == keys else {
+        guard let payload = rawPayload as? [String: Any],
+              keys.isSubset(of: Set(payload.keys)),
+              Set(payload.keys).isSubset(of: keys.union(optionalKeys)) else {
             throw invalid("The native request payload contains missing or unsupported fields.", requestID: requestID)
         }
         return payload

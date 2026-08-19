@@ -34,6 +34,12 @@ const TAIL_FLUSH_MS = 120;
 
 export interface VoiceCapture {
   elapsedMs(): number;
+  /**
+   * Loudest sample seen so far. Lets the caller tell "the microphone heard
+   * nothing" apart from "the recogniser could not make out the words", which
+   * are different problems with different fixes.
+   */
+  peakLevel(): number;
   /** Stops the capture. Returns WAV bytes when PCM was requested. */
   stop(): Promise<Uint8Array | null>;
   /** Stops and discards everything. */
@@ -69,6 +75,7 @@ export async function startVoiceCapture(
 
   const pcm: Float32Array[] = [];
   let pcmSamples = 0;
+  let peak = 0;
   const bars: number[] = [];
   let pending = new Float32Array(0);
   let barCount = 0;
@@ -144,6 +151,7 @@ export async function startVoiceCapture(
     const rectified = new Float32Array(samples.length);
     for (let index = 0; index < samples.length; index += 1) {
       const magnitude = Math.abs(samples[index] ?? 0);
+      if (magnitude > peak) peak = magnitude;
       sum += magnitude * magnitude;
       rectified[index] = magnitude < NOISE_FLOOR ? NOISE_FLOOR : magnitude;
     }
@@ -185,6 +193,7 @@ export async function startVoiceCapture(
 
   return {
     elapsedMs: () => performance.now() - startedAt,
+    peakLevel: () => peak,
     async stop() {
       const sampleRate = context.sampleRate;
       // The worklet posts blocks to this thread asynchronously, so at the
@@ -199,6 +208,7 @@ export async function startVoiceCapture(
     cancel() {
       pcm.length = 0;
       pcmSamples = 0;
+      peak = 0;
       teardown();
     },
   };

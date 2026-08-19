@@ -54,12 +54,15 @@ export function isWebOrigin(value) {
     && (url.pathname === "" || url.pathname === "/");
 }
 
-function exactPayload(rawPayload, keys, requestId) {
+/** Optional keys exist so a field added after a helper shipped does not make
+ *  that helper reject the request; required keys stay exact either way. */
+function exactPayload(rawPayload, keys, requestId, optionalKeys = []) {
   if (typeof rawPayload !== "object" || rawPayload === null || Array.isArray(rawPayload)) {
     throw invalid("The native request payload contains missing or unsupported fields.", requestId);
   }
+  const allowed = new Set([...keys, ...optionalKeys]);
   const actual = Object.keys(rawPayload);
-  if (actual.length !== keys.length || !keys.every((key) => Object.hasOwn(rawPayload, key))) {
+  if (!keys.every((key) => Object.hasOwn(rawPayload, key)) || !actual.every((key) => allowed.has(key))) {
     throw invalid("The native request payload contains missing or unsupported fields.", requestId);
   }
   return rawPayload;
@@ -173,17 +176,21 @@ export function decodeRequest(data) {
     }
 
     case "HOST_TRANSCRIBE": {
-      const payload = exactPayload(object.payload, ["audio", "format"], requestId);
+      const payload = exactPayload(object.payload, ["audio", "format"], requestId, ["locale"]);
       if (payload.format !== "wav"
         || typeof payload.audio !== "string"
         || payload.audio.length > MAX_TRANSCRIBE_AUDIO_B64_CHARS) {
+        throw invalid("The transcription payload is invalid.", requestId);
+      }
+      if (payload.locale !== undefined
+        && (typeof payload.locale !== "string" || !/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/.test(payload.locale))) {
         throw invalid("The transcription payload is invalid.", requestId);
       }
       const wav = Buffer.from(payload.audio, "base64");
       if (wav.length < 44 || wav.subarray(0, 4).toString("ascii") !== "RIFF") {
         throw invalid("The transcription payload is invalid.", requestId);
       }
-      return { requestId, type, payload: { wav } };
+      return { requestId, type, payload: { wav, ...(payload.locale ? { locale: payload.locale } : {}) } };
     }
 
     case "HOST_COMPLETE": {

@@ -157,10 +157,13 @@ public struct BrowserGuideHostService: Sendable {
             evidence?.clear()
             return ["cleared": true]
 
-        case .transcribe(let wavData) where request.type == .transcribe:
+        case .transcribe(let wavData, let locale) where request.type == .transcribe:
             guard let transcriber else { throw engineUnavailable(request) }
             do {
-                return ["transcript": try await transcriber.transcribe(wavData: wavData)]
+                return ["transcript": try await transcriber.transcribe(
+                    wavData: wavData,
+                    locale: locale.map { Locale(identifier: $0) }
+                )]
             } catch let error as SpeechTranscriberError {
                 throw mapTranscriberError(error, requestID: request.requestID)
             }
@@ -243,7 +246,16 @@ public struct BrowserGuideHostService: Sendable {
         case .onDeviceUnavailable:
             return HostFailure(
                 code: .internalError,
-                message: "On-device speech recognition is unavailable for English on this Mac; audio is never sent to a server.",
+                message: "On-device speech recognition is unavailable on this Mac; audio is never sent to a server.",
+                retryable: false,
+                requestID: requestID
+            )
+        case .languageUnavailable(let language):
+            // Naming the language is the whole point: "recognition unavailable"
+            // sends people to check a microphone that works fine.
+            return HostFailure(
+                code: .internalError,
+                message: "This Mac has no on-device speech model for \(language). Add it in System Settings > General > Language & Region, then try again. Audio is never sent to a server.",
                 retryable: false,
                 requestID: requestID
             )

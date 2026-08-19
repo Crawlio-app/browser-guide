@@ -325,7 +325,7 @@ async function handleHostBridgeRequest(message: HostBridgeRequest): Promise<Host
         return { ok: true, cleared: result.cleared };
       }
       case "GUIDE_HOST_TRANSCRIBE": {
-        const result = await nativeHost.transcribe(message.audio);
+        const result = await nativeHost.transcribe(message.audio, message.locale);
         return { ok: true, transcript: result.transcript };
       }
       case "GUIDE_HOST_COMPLETE": {

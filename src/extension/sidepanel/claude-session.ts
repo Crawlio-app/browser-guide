@@ -147,7 +147,7 @@ export class LocalClaudeSession {
    * The recording the panel captured, transcribed on this computer and then
    * answered. Nothing about the audio leaves the machine.
    */
-  async submitRecording(wavBase64: string, context: PageContext): Promise<void> {
+  async submitRecording(wavBase64: string, context: PageContext, heardSound = true): Promise<void> {
     const turn = this.activeTurn;
     if (!turn || turn.status !== "capturing") return;
     this.setState("thinking");
@@ -163,11 +163,17 @@ export class LocalClaudeSession {
       return;
     }
     if (!transcript) {
-      // Nothing was said. Drop the turn in silence rather than asking the
-      // model about an empty question.
+      // Dropping this in silence looked exactly like being ignored. The two
+      // causes need different fixes, so say which one happened.
       this.updateTurn("superseded");
       this.clearActiveTurn();
       this.setState("idle");
+      this.callbacks.onError(
+        heardSound
+          ? "That recording could not be made out. Try again a little closer to the microphone."
+          : "The microphone did not pick anything up. Check that the right input is selected, then try again.",
+        "microphone",
+      );
       return;
     }
     this.callbacks.onUserTranscript(transcript, true);
