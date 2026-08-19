@@ -58,7 +58,7 @@ type SetupState = "booting" | "helper-missing" | "helper-unreachable" | "permiss
  * product is the same either way, and the panel never asks anyone to choose.
  */
 type GuideEngine = "realtime" | "claude";
-type ToolbarState = "Ready" | "Guiding" | "Listening" | "Paused" | "Not shared" | "Demo" | "Unavailable";
+type ToolbarState = "Ready" | "Guiding" | "Listening" | "Thinking" | "Speaking" | "Paused" | "Not shared" | "Demo" | "Unavailable";
 
 interface ConversationEntry {
   id: string;
@@ -1074,13 +1074,11 @@ function BrowserGuideApp(): React.ReactElement {
         throw new Error(hostError(response, "The sign-in could not be imported."));
       }
       if (response.account) setAccount(response.account);
-      if (response.configured) {
-        setEngine("realtime");
-        setSetup("ready");
-      } else if (response.provider === "claude-code") {
-        // The sign-in that just landed is enough to run the whole product.
-        setEngine("claude");
-        setSetup("ready");
+      if (response.configured || response.provider === "claude-code") {
+        // Health owns the engine decision: it knows every credential present
+        // and the stored preference, so connecting one more sign-in adds a
+        // choice instead of silently overriding the one already made.
+        await refreshHostRef.current(false);
       } else {
         // The import worked. Saying so in red taught people that a button that
         // did its job had failed, and left them clicking it again.
@@ -1426,7 +1424,11 @@ function BrowserGuideApp(): React.ReactElement {
           ? "Paused"
           : walkthrough && walkthrough.phase !== "complete" ? "Guiding"
             : voiceState === "listening" ? "Listening"
-              : voiceState === "offline" ? "Unavailable" : "Ready";
+              // The moments in between were all labelled Ready, so the lag
+              // after sending read as the product doing nothing.
+              : voiceState === "thinking" || voiceState === "pointing" ? "Thinking"
+                : voiceState === "speaking" ? "Speaking"
+                  : voiceState === "offline" ? "Unavailable" : "Ready";
 
   if (setup !== "ready" && setup !== "demo") {
     return (
@@ -1439,6 +1441,8 @@ function BrowserGuideApp(): React.ReactElement {
           sources={sources}
           account={account}
           awaiting={awaiting}
+          canReturn={engines.length > 0}
+          onReturn={() => void refreshHost()}
           onBeginSignIn={beginSignIn}
           onCancelWait={cancelSignInWait}
           keyInput={transientKeyInput}
@@ -1539,6 +1543,15 @@ function BrowserGuideApp(): React.ReactElement {
           <section className={`issue-line ${issue.kind}`} role="status">
             <span>{issue.message}</span>
             {issue.kind === "microphone" && <button type="button" onClick={openMicrophoneGuide}>Enable microphone</button>}
+            {/* A rate limit or credential failure names one provider; the fix
+                may simply be a different one. This opens the sign-in screen
+                without touching the credential that exists. */}
+            {(issue.kind === "realtime" || issue.kind === "key") && setup === "ready" && (
+              <button type="button" onClick={() => {
+                setSources(null);
+                setSetup("key-missing");
+              }}>Use another sign-in</button>
+            )}
             {issue.retryQuestion && <button type="button" onClick={() => void submitQuestion(issue.retryQuestion)}>Retry</button>}
           </section>
         )}
@@ -1622,6 +1635,15 @@ function BrowserGuideApp(): React.ReactElement {
               )}
             </article>
           ))}
+          {/* On the Claude engine a spoken question is transcribed on this
+              computer before any entry exists, so pressing send used to leave
+              a blank screen for the whole gap. */}
+          {voiceState === "thinking" && !entries.some((entry) => entry.status === "pending") && (
+            <article className="editorial-turn transcribing-turn" aria-live="polite">
+              <span className="thinking-mark" aria-label="Working on your recording"><i /><i /><i /></span>
+              <span className="transcribing-note">Listening back…</span>
+            </article>
+          )}
         </section>
       </div>
 
@@ -1740,6 +1762,10 @@ interface SetupViewProps {
   sources: NativeCredentialSource[] | null;
   account: NativeAccountIdentity | null;
   awaiting: CredentialProvider | null;
+  /** True when a working session exists underneath: the screen was opened by
+   *  choice, so leaving without connecting anything must be one click. */
+  canReturn: boolean;
+  onReturn(): void;
   onBeginSignIn(provider: CredentialProvider): void;
   onCancelWait(): void;
   keyInput: React.RefObject<HTMLInputElement | null>;
@@ -2034,6 +2060,11 @@ function SignInOptions(props: SetupViewProps): React.ReactElement {
       ) : (
         <button className="setup-secondary" type="button" onClick={() => setKeyOpen(true)}>
           Paste an API key instead
+        </button>
+      )}
+      {props.canReturn && (
+        <button className="setup-secondary" type="button" onClick={props.onReturn}>
+          Back to the session
         </button>
       )}
     </form>
