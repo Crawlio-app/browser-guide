@@ -1045,11 +1045,13 @@ function BrowserGuideApp(): React.ReactElement {
   const beginSignIn = useCallback((provider: CredentialProvider) => {
     setIssue(null);
     if (provider === "codex") {
-      // Chrome hands the scheme to macOS and asks first. Deliberately not a
-      // synthetic anchor click: this bundle is checked for the absence of
-      // element clicks, and that check is load-bearing for the read-only
-      // guarantee, so it should never be relaxed for a convenience.
-      window.open(CODEX_LAUNCH_URL, "_blank", "noopener");
+      // The real login page. An earlier version opened codex://launch, which
+      // brings up the ChatGPT app; that is what the Codex extension does, but
+      // its backend can use the app's session and ours cannot, so for us it
+      // was a door to a room with nothing in it. The one login that produces
+      // a credential this product can use is the OpenAI platform account,
+      // and the key it mints is pasted in the waiting panel.
+      window.open(OPENAI_KEYS_URL, "_blank", "noopener");
     }
     // Claude Code's sign-in is made by running the CLI, so the waiting panel
     // shows that command rather than pretending a URL can create it.
@@ -1076,6 +1078,11 @@ function BrowserGuideApp(): React.ReactElement {
         throw new Error(hostError(response, "The sign-in could not be imported."));
       }
       if (response.account) setAccount(response.account);
+      setIssue({
+        kind: "key",
+        tone: "note",
+        message: `${providerName(response.provider)} is connected.`,
+      });
       if (response.configured || response.provider === "claude-code") {
         // Health owns the engine decision: it knows every credential present
         // and the stored preference, so connecting one more sign-in adds a
@@ -1828,8 +1835,6 @@ function expiryNotice(account: NativeAccountIdentity | null): string | null {
 
 const INSTALL_COMMAND = "npx crawlio-browser-guide init";
 const OPENAI_KEYS_URL = "https://platform.openai.com/api-keys";
-/** Opens the local ChatGPT app, which is the only sign-in action the Codex extension has. */
-const CODEX_LAUNCH_URL = "codex://launch";
 const CLAUDE_LOGIN_COMMAND = "claude";
 /** The engine chosen last time both credentials were present, if any. The
  *  worker owns the storage; this bundle is deliberately barred from it. */
@@ -1977,20 +1982,44 @@ function SignInOptions(props: SetupViewProps): React.ReactElement {
   if (props.awaiting) {
     return (
       <div className="signin-waiting" role="status">
-        <p className="signin-waiting-title">Waiting for your {providerName(props.awaiting)} sign-in</p>
         {props.awaiting === "codex" ? (
-          <p className="signin-empty">
-            Finish signing in to ChatGPT, and Browser Guide will pick it up on its own. Nothing to come back and click.
-          </p>
+          <form
+            className="key-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void props.onConfigureKey();
+            }}
+          >
+            <p className="signin-waiting-title">Waiting for your OpenAI key</p>
+            <p className="signin-empty">
+              Sign in on the page that just opened, create a key, and paste it here.
+              A Codex sign-in made in API-key mode is picked up on its own too.
+            </p>
+            <input
+              id="platform-key"
+              ref={props.keyInput}
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="sk-proj-…"
+              onChange={(event) => props.onKeyPresent(Boolean(event.currentTarget.value.trim()))}
+              autoFocus
+            />
+            <button className="setup-action" type="submit" disabled={!props.keyPresent || props.keyBusy}>
+              {props.keyBusy ? "Saving…" : "Save key"}
+            </button>
+            <button type="button" className="setup-secondary" onClick={props.onCancelWait}>Cancel</button>
+          </form>
         ) : (
           <>
+            <p className="signin-waiting-title">Waiting for your Claude Code sign-in</p>
             <p className="signin-empty">
               Run this in a terminal and sign in. Browser Guide will pick it up on its own.
             </p>
             <CommandRow command={CLAUDE_LOGIN_COMMAND} />
+            <button type="button" className="setup-secondary" onClick={props.onCancelWait}>Cancel</button>
           </>
         )}
-        <button type="button" className="setup-secondary" onClick={props.onCancelWait}>Cancel</button>
       </div>
     );
   }
@@ -2042,7 +2071,7 @@ function SignInOptions(props: SetupViewProps): React.ReactElement {
                 disabled={props.keyBusy}
                 onClick={() => props.onBeginSignIn(source.provider)}
               >
-                <span>Sign in to {providerName(source.provider)}</span>
+                <span>{source.provider === "codex" ? "Sign in to OpenAI and add a key" : `Sign in to ${providerName(source.provider)}`}</span>
               </button>
             </div>
           ))}

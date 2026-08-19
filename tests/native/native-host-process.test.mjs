@@ -27,6 +27,7 @@ test("native host exchanges correlated little-endian framed messages without std
   ], host, {
     ...process.env,
     BROWSER_GUIDE_TEST_IN_MEMORY_KEYCHAIN: "1",
+    BROWSER_GUIDE_CREDENTIALS_PATH: isolatedCredentialsPath("framing"),
   });
 
   assert.equal(stderr, "");
@@ -80,9 +81,13 @@ test("configured key travels only in framed stdin and is absent from outputs, ar
     { version: 1, requestId: "44444444-4444-4444-8444-444444444444", type: "HOST_FORGET_KEY" },
     { version: 1, requestId: "55555555-5555-4555-8555-555555555555", type: "HOST_HEALTH" },
   ];
+  // The isolated store is the finding here, not a nicety: without it this
+  // test's HOST_FORGET_KEY deleted the real key in
+  // ~/.config/browser-guide/credentials.json on every local run.
   const result = await exchange(requests, host, {
     ...process.env,
     BROWSER_GUIDE_TEST_IN_MEMORY_KEYCHAIN: "1",
+    BROWSER_GUIDE_CREDENTIALS_PATH: isolatedCredentialsPath("leak-check"),
   });
 
   assert.equal(result.messages.length, 5);
@@ -139,6 +144,7 @@ test("health completes while an earlier Realtime session request is still blocke
     ...process.env,
     BROWSER_GUIDE_TEST_IN_MEMORY_KEYCHAIN: "1",
     BROWSER_GUIDE_TEST_REALTIME_DELAY_MILLISECONDS: "750",
+    BROWSER_GUIDE_CREDENTIALS_PATH: isolatedCredentialsPath("concurrency"),
   });
 
   assert.equal(result.stderr, "");
@@ -293,6 +299,12 @@ test("credential sources report what this computer has, never a token, in both h
   // Carrying a payload is a different request, and both hosts must reject it.
   assert.equal(messages.find(({ requestId }) => requestId === strayId).error.code, "INVALID_REQUEST");
 });
+
+/** A store of its own for every test that spawns the real helper. Tests that
+ *  configure or forget keys must never see the file a person actually uses. */
+function isolatedCredentialsPath(label) {
+  return resolve(tmpdir(), `browser-guide-credentials-${label}-${process.pid}.json`);
+}
 
 function exchange(requests, executable = host, environment = process.env) {
   return exchangeUntilMessageCount(requests, requests.length, executable, environment);

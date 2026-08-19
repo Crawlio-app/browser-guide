@@ -170,15 +170,17 @@ describe.skipIf(!existsSync(chromiumPath))("sign-in surface", () => {
     const panel = await openPanel("stub", { BROWSER_GUIDE_TEST_SIGNIN_AFTER: "2" });
     await expect.poll(() => setupTitle(panel), { timeout: 15_000 }).toBe("Connect your sign-in");
 
-    const launch = panel.locator(".signin-missing-row button", { hasText: "Sign in to Codex" });
+    const launch = panel.locator(".signin-missing-row button", { hasText: "Sign in to OpenAI and add a key" });
     await expect.poll(() => launch.count(), { timeout: 20_000 }).toBe(1);
     await launch.click();
 
     // Waiting replaces the options so a second attempt cannot be started, and
-    // nothing has to be pressed once the sign-in exists.
+    // the paste field is right there because the login that just opened mints
+    // a key, not a detectable file.
     await expect.poll(() => panel.locator(".signin-waiting-title").textContent(), { timeout: 10_000 })
-      .toContain("Waiting for your Codex sign-in");
+      .toContain("Waiting for your OpenAI key");
     await expect.poll(() => panel.locator(".signin-button").count(), { timeout: 5_000 }).toBe(0);
+    expect(await panel.locator(".signin-waiting #platform-key").count()).toBe(1);
 
     await expect.poll(() => panel.locator(".instrument-bar").count(), { timeout: 30_000 }).toBe(1);
     expect(await panel.locator("#setup-title").count()).toBe(0);
@@ -187,7 +189,7 @@ describe.skipIf(!existsSync(chromiumPath))("sign-in surface", () => {
   it("lets a wait be abandoned without losing the other routes", async () => {
     const panel = await openPanel("stub", { BROWSER_GUIDE_TEST_SIGNIN_AFTER: "999" });
     await expect.poll(() => setupTitle(panel), { timeout: 15_000 }).toBe("Connect your sign-in");
-    await panel.locator(".signin-missing-row button", { hasText: "Sign in to Codex" }).click();
+    await panel.locator(".signin-missing-row button", { hasText: "Sign in to OpenAI and add a key" }).click();
     await expect.poll(() => panel.locator(".signin-waiting-title").count(), { timeout: 10_000 }).toBe(1);
 
     await panel.locator(".setup-secondary", { hasText: "Cancel" }).click();
