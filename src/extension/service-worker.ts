@@ -154,8 +154,7 @@ async function handleTabUpdated(
 
 async function handleTabActivated(tabId: number): Promise<void> {
   await ensureStateLoaded();
-  if (runtimeState.tabId === undefined) return;
-  if (tabId === runtimeState.tabId) {
+  if (runtimeState.tabId !== undefined && tabId === runtimeState.tabId) {
     // Coming back to the tab that was already shared. The grant did not go
     // anywhere, so neither should the session: leaving it paused made
     // switching tabs feel like losing the page, and nothing on screen said
@@ -163,6 +162,16 @@ async function handleTabActivated(tabId: number): Promise<void> {
     if (runtimeState.status === "permission-paused") await resumeIfStillAuthorized();
     return;
   }
+  // "Restricted page" describes a tab, and this activation just left that
+  // tab. Keeping the verdict made it a trap: click the icon once on
+  // chrome://extensions and every tab afterwards said Chrome does not allow
+  // guidance, with no way out on screen. On any other tab the truth is
+  // simply "not shared yet", whose banner says what to do about it.
+  if (runtimeState.pauseReason === "restricted-page") {
+    await pause("not-authorized");
+    return;
+  }
+  if (runtimeState.tabId === undefined) return;
   await pause("not-authorized");
 }
 

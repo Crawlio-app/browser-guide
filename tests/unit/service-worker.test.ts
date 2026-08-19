@@ -246,6 +246,26 @@ describe("service worker startup and content runtime readiness", () => {
     }));
   });
 
+  it("does not let a restricted page condemn every tab that follows", async () => {
+    // Clicking the icon on chrome://extensions is refused, correctly. That
+    // verdict used to persist across tab switches, so Gmail then showed
+    // "Chrome does not allow guidance on this page" with no way out.
+    const harness = createHarness();
+    vi.stubGlobal("chrome", harness.chromeStub);
+    await import("../../src/extension/service-worker.js");
+    harness.resolveState({
+      status: "permission-paused",
+      pauseReason: "restricted-page",
+      refsValid: false,
+    });
+    harness.tabActivatedListeners[0]?.({ tabId: 42, windowId: 4 });
+
+    await vi.waitFor(() => expect(latestStoredState(harness)).toMatchObject({
+      status: "permission-paused",
+      pauseReason: "not-authorized",
+    }));
+  });
+
   it("pauses and tears down an authorized tab when Chrome replaces it", async () => {
     const harness = createHarness();
     vi.stubGlobal("chrome", harness.chromeStub);
