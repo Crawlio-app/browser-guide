@@ -7,7 +7,8 @@ Please email **rashid.azarang.eg@gmail.com** with the details. Do not open a pub
 Reports we especially care about:
 
 - Any way for the extension to act on a page: synthetic clicks, typing, focus, navigation, scrolling outside the documented take-me-there arrow, or form mutation.
-- Any path that exposes stored credentials outside `~/.config/browser-guide/credentials.json` (Chrome storage, logs, argv, network requests other than the authenticated call to OpenAI).
+- Any path that exposes stored credentials outside `~/.config/browser-guide/credentials.json` (Chrome storage, logs, argv, or any network request other than the authenticated call to the provider whose credential you connected: OpenAI on the Realtime engine, Anthropic on the Claude engine).
+- Page evidence reaching a recipient other than the one the connected credential names, or reaching any Crawlio-operated server, which is never in the path on either engine.
 - Escapes of the sanitization boundary: input values, passwords, cookies, or hidden form data reaching the model.
 - Screenshot fail-closed bypasses: a capture succeeding while sensitive content is visible.
 - Native messaging host impersonation or unauthorized extension origins reaching the helper.

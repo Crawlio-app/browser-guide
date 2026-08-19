@@ -13,7 +13,7 @@ The child is therefore an independent MV3 extension and macOS native host. It ad
 3. The side panel owns Ask, Find, Walkthrough, voice state, turn IDs, snapshot freshness, and recovery.
 4. A closed-shadow, pointer-transparent overlay presents one primary beacon or at most three numbered comparison targets. Walkthrough step cards additionally carry one interactive Next button inside the extension's own shadow UI; it only messages the extension to continue and registers no listeners on page elements.
 5. Chrome Native Messaging connects the service worker to `com.crawlio.browser_guide` over framed stdio. Exact extension-origin registration replaces host permissions, localhost networking, pairing codes, HMAC tokens, and ports.
-6. The native host stores the standard OpenAI key through Security.framework and creates OpenAI Realtime WebRTC sessions. It receives only a credential operation or SDP plus mode; it never receives page evidence, screenshots, transcripts, or walkthrough state.
+6. The native host holds the credential in a private 0600 file and speaks to whichever provider that credential names. On the Realtime engine it creates OpenAI WebRTC sessions and receives only a credential operation or SDP plus mode, never page evidence, screenshots, transcripts, or walkthrough state. On the Claude engine it is the relay, so it does receive the sanitized evidence it forwards to Anthropic, and it transcribes voice on-device so no audio leaves the machine. Neither engine involves a Crawlio-operated server.
 7. The Realtime application surface contains exactly `show_guidance` and `clear_guidance`.
 
 ## What was worth adapting

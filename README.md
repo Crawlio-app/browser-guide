@@ -17,7 +17,7 @@ Built by the makers of [Crawlio](https://www.crawlio.app). Where [Crawlio Browse
 - **Ask** — explains the current page: what it is, what each section does, where to look next.
 - **Find** — locates the best match for what you describe and places a pointer-transparent emerald beacon over it, with a dismissable on-page card.
 - **Walkthrough** — select it and the tour starts by itself: a friendly compass companion walks you through the page one bounded step at a time, with progress and a **Next** button right on the page. **Done** closes the tour.
-- **Voice** — press the beacon (or `⌘⇧G` / `⌘⇧Space`) and talk; audio streams from your Mac directly to OpenAI over WebRTC. A **Speak** toggle reads typed answers aloud with the system's own voice — locally on macOS and Windows, no audio session and no extra cost.
+- **Voice** — press the beacon (or `⌘⇧G` / `⌘⇧Space`) and talk. With an OpenAI key the audio streams from your Mac to OpenAI over WebRTC; with a Claude sign-in it is transcribed on this computer by macOS and never leaves it. Either way you press once to start and once to send, so a pause never cuts you off, and questions are transcribed in the language you actually speak. A **Speak** toggle reads typed answers aloud with the system's own voice, locally on macOS and Windows, with no audio session and no extra cost.
 - **Practice tour, model-free** — a canned walkthrough of the hosted practice page that runs entirely locally: no model, no network, no helper. It is the wizard's landing step and the panel's demo mode for users who have not installed the helper yet.
 - **Visual sharing, fail-closed** — screenshots are opt-in and omitted entirely whenever a visible input, code block, or likely-sensitive content is present.
 - **Harness-style credentials** — sign in by reusing your existing Codex or Claude Code login, or paste an OpenAI key. Credentials live in `~/.config/browser-guide/credentials.json` (0600) managed by the native helper — the same pattern Claude Code, Codex, and gh use. They never enter Chrome storage, source, logs, or command arguments. Imported sign-ins stay fresh by re-reading their source file (never by running OAuth flows of our own): a near-expiry Claude token re-syncs from `~/.claude/.credentials.json`, and a rejected Codex key re-reads `~/.codex/auth.json` once before failing.
@@ -41,7 +41,7 @@ See [AUDIT.md](AUDIT.md) for the complete security assessment and [PROVENANCE.md
 
 - Chrome 116+ and Node.js 20+ (macOS 13+, Windows, or Linux via `npx crawlio-browser-guide init`)
 - Building the macOS helper from source additionally needs Xcode Command Line Tools with Swift 6
-- An OpenAI Platform API key (the Realtime API bills against it)
+- A credential, and a sign-in you already have counts: a Claude Code sign-in runs the whole product on your Anthropic subscription with no API key at all. An OpenAI Platform API key enables Realtime voice instead and bills against that key. A Codex sign-in only helps if it was made in API-key mode, since a ChatGPT-plan sign-in carries no key to import.
 
 ## Quick start
 
@@ -103,7 +103,13 @@ Your agent gains one tool, `get_current_page`, that returns the shared snapshot 
                                              (Claude Code / Codex eyes)
 ```
 
-Page evidence and audio go directly from Chrome to OpenAI; the helper creates sessions and stores the trimmed question/answer pairs that make up site memory, but never sees screenshots, page content, or the live conversation stream.
+Where your page goes depends on which credential you connected, and Browser Guide picks the engine for you rather than asking.
+
+**With an OpenAI key (Realtime).** Page evidence and audio go directly from Chrome to OpenAI. The helper creates the session and stores the trimmed question and answer pairs that make up site memory, but never sees screenshots, page content, or the live conversation stream.
+
+**With a Claude sign-in.** The helper is the relay, so it does see the sanitized page evidence on its way to Anthropic. In exchange, voice never leaves this computer at all: the recording is transcribed on-device by macOS, and only the resulting text is sent.
+
+Either way there is no Crawlio server in the path. Nothing is sent anywhere until you ask a question, and the credential stays in a private file on your machine rather than in Chrome.
 
 ## Verification
 
