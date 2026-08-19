@@ -38,6 +38,8 @@ export interface ExtensionRuntimeState {
 
 export type SidePanelRequest =
   | { type: "GUIDE_GET_STATE" }
+  | { type: "GUIDE_ENGINE_PREFERENCE_GET" }
+  | { type: "GUIDE_ENGINE_PREFERENCE_SET"; engine: "realtime" | "claude" }
   | { type: "GUIDE_CAPTURE_CONTEXT"; shareVisual: boolean }
   | { type: "GUIDE_SHOW_GUIDANCE"; snapshotId: string; command: GuidanceCommand }
   | { type: "GUIDE_CLEAR_GUIDANCE" }
@@ -103,10 +105,13 @@ export function isSidePanelRequest(value: unknown): value is SidePanelRequest {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   switch (value.type) {
     case "GUIDE_GET_STATE":
+    case "GUIDE_ENGINE_PREFERENCE_GET":
     case "GUIDE_CLEAR_GUIDANCE":
     case "GUIDE_END_SESSION":
     case "GUIDE_RESUME_REQUEST":
       return true;
+    case "GUIDE_ENGINE_PREFERENCE_SET":
+      return value.engine === "realtime" || value.engine === "claude";
     case "GUIDE_CAPTURE_CONTEXT":
       return typeof value.shareVisual === "boolean";
     case "GUIDE_SHOW_GUIDANCE":

@@ -198,8 +198,11 @@ function BrowserGuideApp(): React.ReactElement {
   const [keyPresent, setKeyPresent] = useState(false);
   const [keyBusy, setKeyBusy] = useState(false);
   const [account, setAccount] = useState<NativeAccountIdentity | null>(null);
-  /** Which engine answers. Chosen once per health check, never by the user. */
+  /** Which engine answers. Health decides what is possible; when both
+   *  credentials are present, the person decides which one they want. */
   const [engine, setEngine] = useState<GuideEngine>("realtime");
+  /** The engines the connected credentials can actually drive. */
+  const [engines, setEngines] = useState<GuideEngine[]>([]);
   /** Null until asked, and after a helper too old to answer: both mean "show every option". */
   const [sources, setSources] = useState<NativeCredentialSource[] | null>(null);
   /** The sign-in we sent someone off to make, while we watch for it to appear. */
@@ -454,15 +457,22 @@ function BrowserGuideApp(): React.ReactElement {
       // complete product on its own, the way a ChatGPT plan is for Codex and
       // a claude.ai account is for Claude in Chrome: the subscription answers,
       // and nobody is asked for an API key.
-      if (response.health.configured === true) {
-        setEngine("realtime");
-        setSetup("ready");
-      } else if (response.health.claude === true) {
-        setEngine("claude");
-        setSetup("ready");
-      } else {
+      const available: GuideEngine[] = [
+        ...(response.health.configured === true ? ["realtime" as const] : []),
+        ...(response.health.claude === true ? ["claude" as const] : []),
+      ];
+      setEngines(available);
+      if (available.length === 0) {
         setSetup("key-missing");
+        return;
       }
+      // With one credential there is nothing to choose. With both, the last
+      // choice stands: Realtime is the stronger engine for voice and visuals,
+      // so it is the default, but "best" is not the same for everyone and a
+      // default must never be a lock.
+      const preferred = await storedEnginePreference();
+      setEngine(available.includes(preferred ?? "realtime") ? preferred ?? "realtime" : available[0] ?? "realtime");
+      setSetup("ready");
     } catch (error) {
       if (epoch !== authEpoch.current) return;
       setSetup("helper-unreachable");
@@ -1358,6 +1368,16 @@ function BrowserGuideApp(): React.ReactElement {
     }
   }, [session]);
 
+  /** Flips to the other engine and remembers the choice. Only offered when
+   *  both credentials are present, and never mid-answer. */
+  const switchEngine = useCallback(() => {
+    if (engines.length < 2 || session.busy) return;
+    const next: GuideEngine = engine === "realtime" ? "claude" : "realtime";
+    setEngine(next);
+    void runtimeSend({ type: "GUIDE_ENGINE_PREFERENCE_SET", engine: next }).catch(() => undefined);
+    setLiveAnnouncement(next === "claude" ? "Claude answers now." : "OpenAI Realtime answers now.");
+  }, [engine, engines, session]);
+
   const forgetKey = useCallback(async () => {
     if (!window.confirm(account?.label
       ? `Disconnect ${account.label}? The credential is removed from this Mac. Your ${providerName(account.provider)} sign-in itself is untouched.`
@@ -1450,6 +1470,21 @@ function BrowserGuideApp(): React.ReactElement {
             <span className="account-chip" title={connectedAsTitle(account, engine)}>
               {account.label ?? providerName(account.provider)}
             </span>
+          )}
+          {/* Both credentials present: the engine is a choice, not a verdict.
+              Realtime is the default for voice and visuals; one click flips. */}
+          {!inDemo && engines.length > 1 && (
+            <button
+              type="button"
+              className="account-chip engine-chip"
+              disabled={session.busy}
+              onClick={switchEngine}
+              title={engine === "claude"
+                ? "Claude answers. Click for OpenAI Realtime, which is stronger for voice and can see screenshots."
+                : "OpenAI Realtime answers. Click for Claude, which runs on your subscription and keeps voice on this Mac."}
+            >
+              via {engine === "claude" ? "Claude" : "OpenAI"}
+            </button>
           )}
         </div>
         <div className="instrument-actions">
@@ -1758,6 +1793,18 @@ const OPENAI_KEYS_URL = "https://platform.openai.com/api-keys";
 /** Opens the local ChatGPT app, which is the only sign-in action the Codex extension has. */
 const CODEX_LAUNCH_URL = "codex://launch";
 const CLAUDE_LOGIN_COMMAND = "claude";
+/** The engine chosen last time both credentials were present, if any. The
+ *  worker owns the storage; this bundle is deliberately barred from it. */
+async function storedEnginePreference(): Promise<GuideEngine | null> {
+  try {
+    const response = await runtimeSend<unknown>({ type: "GUIDE_ENGINE_PREFERENCE_GET" });
+    if (!isRecord(response) || response.ok !== true) return null;
+    return response.engine === "claude" || response.engine === "realtime" ? response.engine : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Claude's own panel polls at this cadence while a login is in progress. */
 const SIGN_IN_POLL_INTERVAL_MS = 2_000;
 const SIGN_IN_POLL_ATTEMPTS = 150;

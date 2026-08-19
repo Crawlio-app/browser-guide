@@ -204,6 +204,27 @@ describe.skipIf(!existsSync(chromiumPath))("sign-in surface", () => {
     await expect.poll(() => panel.locator(".signin-button").count(), { timeout: 10_000 }).toBeGreaterThan(0);
   }, 90_000);
 
+  it("lets the person choose the engine when both credentials exist", async () => {
+    // OpenAI key and Claude sign-in both present. Realtime wins by default,
+    // because it is the stronger engine for voice and visuals, and one click
+    // flips to Claude and back. A default must never be a lock.
+    const panel = await openPanel("stub", { BROWSER_GUIDE_TEST_OPENAI: "1", BROWSER_GUIDE_TEST_CLAUDE: "1" });
+    await expect.poll(() => panel.locator(".instrument-bar").count(), { timeout: 20_000 }).toBe(1);
+
+    const chip = panel.locator(".engine-chip");
+    await expect.poll(() => chip.count(), { timeout: 10_000 }).toBe(1);
+    expect(await chip.textContent()).toBe("via OpenAI");
+
+    await chip.click();
+    await expect.poll(() => chip.textContent(), { timeout: 5_000 }).toBe("via Claude");
+
+    // The choice survives the panel being closed and reopened.
+    const again = await context!.newPage();
+    await again.goto(`${extensionOrigin}/sidepanel.html`);
+    await expect.poll(() => again.locator(".engine-chip").textContent(), { timeout: 15_000 })
+      .toBe("via Claude");
+  }, 90_000);
+
   it("does not present a lapsed sign-in as a connected account", async () => {
     // The stored copy of a sign-in outlives the sign-in itself. Treating
     // presence as proof put the panel in a ready state, with an account chip,

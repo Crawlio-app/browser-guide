@@ -494,6 +494,18 @@ input:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/* The engine, when there is a choice: same quiet chip, but interactive. */
+.engine-chip {
+  cursor: pointer;
+  background: none;
+  transition: color var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+
+.engine-chip:not(:disabled):hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
 /* Who is connected, kept quiet: it is reassurance, not a control. */
 .account-chip {
   max-width: 13ch;

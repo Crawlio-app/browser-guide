@@ -94,6 +94,14 @@ describe.skipIf(!existsSync(chromiumPath))("Claude engine with no OpenAI credent
     if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true });
   });
 
+  it("offers the engine choice only when there is a choice, and keeps it", async () => {
+    // This run has only the Claude sign-in, so there is no chip: a choice
+    // with one option is noise.
+    const workspace = panel!;
+    await expect.poll(() => workspace.locator(".instrument-bar").count(), { timeout: 20_000 }).toBe(1);
+    expect(await workspace.locator(".engine-chip").count()).toBe(0);
+  }, 60_000);
+
   it("answers and points using the Anthropic sign-in alone", async () => {
     const workspace = panel!;
     // Ready without ever asking for a key: the sign-in is the whole setup.

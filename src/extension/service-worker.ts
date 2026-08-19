@@ -24,6 +24,7 @@ import {
 import { NativeHostClient, toHostClientFailure } from "./native-host-client.js";
 
 const STATE_KEY = "browserGuideRuntimeStateV1";
+const ENGINE_PREFERENCE_KEY = "browserGuideEnginePreferenceV1";
 const MAX_SCREENSHOT_DATA_URL_BYTES = 1_500_000;
 const SCREENSHOT_QUALITY_STEPS = [60, 42, 28] as const;
 const CONTENT_RUNTIME_PROBE_SNAPSHOT_ID = "browser-guide-runtime-probe";
@@ -259,6 +260,18 @@ async function handleSidePanelRequest(message: SidePanelRequest): Promise<unknow
   switch (message.type) {
     case "GUIDE_GET_STATE":
       return { ok: true, state: runtimeState };
+    // Session storage on purpose: nothing this extension writes to Chrome
+    // survives a browser restart, and that is a claim worth keeping intact
+    // for one preference. The cost is honest and small: after a restart the
+    // default engine answers until someone flips the chip again.
+    case "GUIDE_ENGINE_PREFERENCE_GET": {
+      const stored = await chrome.storage.session.get(ENGINE_PREFERENCE_KEY);
+      const engine = stored[ENGINE_PREFERENCE_KEY];
+      return { ok: true, engine: engine === "claude" || engine === "realtime" ? engine : null };
+    }
+    case "GUIDE_ENGINE_PREFERENCE_SET":
+      await chrome.storage.session.set({ [ENGINE_PREFERENCE_KEY]: message.engine });
+      return { ok: true, engine: message.engine };
     case "GUIDE_CAPTURE_CONTEXT":
       return captureContext(message.shareVisual);
     case "GUIDE_SHOW_GUIDANCE":
