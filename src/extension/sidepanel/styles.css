@@ -461,6 +461,20 @@ input:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/* Who is connected, kept quiet: it is reassurance, not a control. */
+.account-chip {
+  max-width: 13ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
 .eyes-indicator {
   padding: 2px 8px;
   border: 1px solid var(--border-default);

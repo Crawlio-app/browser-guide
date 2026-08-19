@@ -23,6 +23,14 @@ const LEVEL_GAMMA = 0.6;
 const BUFFER_SECONDS = 10;
 /** One bar per this many CSS pixels. */
 const PIXELS_PER_BAR = 4;
+/**
+ * How long to keep listening after stop is pressed, so the blocks the worklet
+ * has already posted can arrive. A render quantum is 128 samples, and several
+ * can be queued behind a busy main thread; this is generous on purpose,
+ * because the cost of waiting is nothing and the cost of not waiting is the
+ * last word of every question.
+ */
+const TAIL_FLUSH_MS = 120;
 
 export interface VoiceCapture {
   elapsedMs(): number;
@@ -179,6 +187,11 @@ export async function startVoiceCapture(
     elapsedMs: () => performance.now() - startedAt,
     async stop() {
       const sampleRate = context.sampleRate;
+      // The worklet posts blocks to this thread asynchronously, so at the
+      // instant someone presses send there is always audio in flight, and it
+      // is the end of what they just said. Tearing down first silently threw
+      // that away, which reads as the recording missing the last word.
+      if (recordPcm) await new Promise((flush) => setTimeout(flush, TAIL_FLUSH_MS));
       teardown();
       if (!recordPcm || pcmSamples === 0) return null;
       return encodeWav(pcm, pcmSamples, sampleRate);

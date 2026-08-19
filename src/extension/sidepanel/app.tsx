@@ -753,8 +753,17 @@ function BrowserGuideApp(): React.ReactElement {
       // The Claude engine answers after the recording ends, so the evidence
       // this turn opened with has to survive until then.
       lastVoiceContext.current = context;
-      await session.startListening(context, mode);
-      await beginCapture();
+      if (session instanceof LocalClaudeSession) {
+        // Opening the microphone takes a moment, and on this engine the panel
+        // is the recorder. Doing it after the panel says "listening" meant
+        // the first word was spoken into a device that was not capturing yet,
+        // so the microphone comes up first and the turn opens once it is live.
+        await beginCapture();
+        await session.startListening(context, mode);
+      } else {
+        await session.startListening(context, mode);
+        await beginCapture();
+      }
     } catch {
       // VoiceSession emits a cause-specific error and always closes partial media.
     } finally {
@@ -1328,6 +1337,15 @@ function BrowserGuideApp(): React.ReactElement {
           <span>{toolbarState}</span>
           {walkthrough && <span className="step-count">{walkthrough.step}/12</span>}
           {agentEyes && <span className="eyes-indicator" role="status" title="Local coding agents can read the captured page snapshot">Eyes on</span>}
+          {/* Who is answering, and therefore where the page evidence goes.
+              Both shipped assistants surface the account somewhere; leaving it
+              invisible meant nobody could tell which credential was in use, or
+              that it is the Mac's rather than this Chrome profile's. */}
+          {!inDemo && account && (
+            <span className="account-chip" title={connectedAsTitle(account, engine)}>
+              {account.label ?? providerName(account.provider)}
+            </span>
+          )}
         </div>
         <div className="instrument-actions">
           <button type="button" className="icon-button" onClick={() => void clearConversation()} aria-label="Clear session" title="Clear session"><ToolbarIcon kind="reset" /></button>
@@ -1591,6 +1609,19 @@ const PROVIDER_NAMES: Record<CredentialProvider, string> = {
 
 function providerName(provider: CredentialProvider): string {
   return PROVIDER_NAMES[provider];
+}
+
+/**
+ * The whole truth about the connection, in a tooltip: who, on what plan, which
+ * model answers, and that the credential belongs to this Mac rather than to
+ * this Chrome profile. That last part surprises people who open a second
+ * profile and are never asked to sign in.
+ */
+function connectedAsTitle(account: NativeAccountIdentity, engine: GuideEngine): string {
+  const who = account.label ? `${providerName(account.provider)} as ${account.label}` : providerName(account.provider);
+  const plan = account.plan ? ` on ${account.plan}` : "";
+  const answers = engine === "claude" ? "Claude answers." : "OpenAI Realtime answers.";
+  return `Connected with ${who}${plan}. ${answers} The sign-in is stored on this Mac, so every Chrome profile here shares it.`;
 }
 
 /** A sign-in is close enough to expiry to be worth mentioning: two weeks. */
