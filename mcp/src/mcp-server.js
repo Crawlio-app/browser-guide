@@ -10,7 +10,7 @@ export async function runMcpServer() {
 
   const server = new McpServer({
     name: "crawlio-browser-guide",
-    version: "0.5.0",
+    version: "0.7.0",
   });
 
   server.registerTool(
