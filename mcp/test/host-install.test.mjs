@@ -8,6 +8,10 @@ import { test } from "node:test";
 import { findHostBinary, hostPaths, installHost, isMachO, manifestBytes, uninstallHost } from "../src/host-install.js";
 
 const darwinOnly = { skip: process.platform !== "darwin" ? "macOS-only behavior" : false };
+// The linux staging test writes a #!/bin/sh launcher and asserts its
+// executable bit: things NTFS cannot represent and cmd cannot run. Windows
+// has its own layout, covered by the LOCALAPPDATA/.bat/registry test below.
+const posixOnly = { skip: process.platform === "win32" ? "POSIX-only launcher and file modes" : false };
 
 function makeHome() {
   return mkdtempSync(join(tmpdir(), "browser-guide-init-test-"));
@@ -88,7 +92,7 @@ test("findHostBinary prefers the env override, then vendor, then the repo dist b
   if (fallback !== null) assert.notEqual(fallback, override);
 });
 
-test("linux install stages the self-contained Node helper and answers a real ping", async (t) => {
+test("linux install stages the self-contained Node helper and answers a real ping", posixOnly, async (t) => {
   const home = makeHome();
   t.after(() => rmSync(home, { recursive: true, force: true }));
 
