@@ -112,8 +112,10 @@ describe.skipIf(!existsSync(chromiumPath))("sign-in surface", () => {
     // second button is the launch action for the sign-in that is absent.
     const buttons = panel.locator(".signin-button");
     // Poll on the account, not the count: the pre-detection fallback also
-    // shows two buttons, so a count alone cannot tell the states apart.
-    await expect.poll(() => buttons.first().textContent(), { timeout: 15_000 })
+    // shows two buttons, so a count alone cannot tell the states apart. The
+    // window has to outlast the panel's own source-retry schedule (~14s) on a
+    // slow CI runner, or this fails exactly when the machine is busiest.
+    await expect.poll(() => buttons.first().textContent(), { timeout: 30_000 })
       .toContain("tester@example.test");
     expect(await buttons.count()).toBe(2);
     const primary = buttons.first();
