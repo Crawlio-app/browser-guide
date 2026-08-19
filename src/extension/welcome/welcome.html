@@ -43,6 +43,14 @@
 
         <div class="divider"></div>
         <p id="connect-status" class="status-line" role="alert" hidden></p>
+        <!-- Re-entry: everything works, so this page's job is to say who is
+             connected and offer the one account action that exists. -->
+        <div id="account-block" hidden>
+          <p class="account-line"><span id="account-name"></span><span id="account-plan" class="account-plan"></span></p>
+          <p class="account-note" id="account-note"></p>
+          <button id="open-guide-btn" class="btn btn-primary" type="button">Open the practice page</button>
+          <button id="disconnect-btn" class="btn btn-ghost" type="button">Disconnect this sign-in</button>
+        </div>
         <div id="install-block" hidden>
           <p class="install-line">Install the local helper with one command:</p>
           <div class="command-row">
@@ -87,7 +95,7 @@
         <ul id="permission-list" class="modal-list"></ul>
         <div class="modal-detail">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          <span>Read-only by design. Credentials stay in a private local file on this Mac; page evidence goes only to OpenAI when you ask.</span>
+          <span>Read-only by design. Credentials stay in a private local file on this Mac. Page evidence goes only to the provider your sign-in names, OpenAI or Anthropic, and only when you ask.</span>
         </div>
         <p id="permission-status" class="permission-status" role="alert"></p>
         <button id="authorize-btn" class="btn btn-primary">Authorize</button>

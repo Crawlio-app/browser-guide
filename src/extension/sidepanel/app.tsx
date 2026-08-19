@@ -261,6 +261,10 @@ function BrowserGuideApp(): React.ReactElement {
     setEntries((current) => [...current, entry].slice(-30));
   }, []);
 
+  /** The callbacks memo is created before refreshHost exists; the ref lets a
+   *  mid-session host error re-ask health instead of guessing a screen. */
+  const refreshHostRef = useRef<(showBoot?: boolean) => Promise<void>>(async () => undefined);
+
   const sessionCallbacks = useMemo<VoiceSessionCallbacks>(() => ({
     onState: setVoiceState,
     onUserTranscript(text, final) {
@@ -344,8 +348,13 @@ function BrowserGuideApp(): React.ReactElement {
     },
     onError(message, kind) {
       if (kind === "permission") setSetup("permission-needed");
-      else if (kind === "host") setSetup("helper-missing");
-      else if (kind === "key") setSetup("key-missing");
+      else if (kind === "host") {
+        // One failed answer is not evidence the helper is uninstalled, and
+        // "Install the helper" mid-session sends people to reinstall software
+        // that hiccupped. Ask health, which knows how to tell a missing
+        // helper from an unreachable one, and land wherever the truth is.
+        void refreshHostRef.current(false).catch(() => undefined);
+      } else if (kind === "key") setSetup("key-missing");
       setIssue(issueFromVoiceError(message, kind));
     },
     onTurn(turn) {
@@ -479,6 +488,7 @@ function BrowserGuideApp(): React.ReactElement {
       setIssue({ kind: "helper", message: errorMessage(error, "The local helper is unavailable.") });
     }
   }, []);
+  refreshHostRef.current = refreshHost;
 
   // Opening the panel during an install lands in a window where the helper is
   // briefly unreachable. Asking again a moment later resolves it, so the panel
@@ -2185,8 +2195,11 @@ function issueFromVoiceError(message: string, kind: VoiceErrorKind): UiIssue {
 
 function hostFailureKind(code: string): Exclude<VoiceErrorKind, "microphone" | "session"> {
   if (code === "PERMISSION_REQUIRED") return "permission";
-  if (code === "NOT_CONFIGURED" || code === "INVALID_API_KEY" || code === "SECURE_STORAGE_ERROR") return "key";
-  if (code === "RATE_LIMITED" || code === "UPSTREAM_ERROR") return "realtime";
+  // Only the helper stating that no credential exists counts as a credential
+  // problem. A store it could not read is an unknown, and unknowns are
+  // retryable answers, not sign-outs.
+  if (code === "NOT_CONFIGURED" || code === "INVALID_API_KEY") return "key";
+  if (code === "RATE_LIMITED" || code === "UPSTREAM_ERROR" || code === "SECURE_STORAGE_ERROR") return "realtime";
   return "host";
 }
 

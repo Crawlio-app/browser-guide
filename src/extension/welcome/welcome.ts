@@ -35,6 +35,12 @@ const permissionList = requiredElement<HTMLUListElement>("permission-list");
 const permissionStatus = requiredElement<HTMLParagraphElement>("permission-status");
 const authorizeButton = requiredElement<HTMLButtonElement>("authorize-btn");
 const cancelButton = requiredElement<HTMLButtonElement>("cancel-btn");
+const accountBlock = requiredElement<HTMLDivElement>("account-block");
+const accountName = requiredElement<HTMLSpanElement>("account-name");
+const accountPlan = requiredElement<HTMLSpanElement>("account-plan");
+const accountNote = requiredElement<HTMLParagraphElement>("account-note");
+const openGuideButton = requiredElement<HTMLButtonElement>("open-guide-btn");
+const disconnectButton = requiredElement<HTMLButtonElement>("disconnect-btn");
 
 let outstanding: string[] = [];
 let modalOpener: HTMLElement | null = null;
@@ -61,13 +67,56 @@ void (async () => {
   if (outstanding.length === 0) {
     const health = await helperHealth();
     if (health.ok) {
-      // Re-entry: everything already works, hand straight off to the guide.
-      window.location.href = GUIDE_URL;
+      // Re-entry: everything already works. This page doubles as the account
+      // surface, the way Claude's options header does, so instead of
+      // vanishing into a redirect it says who is connected and offers the
+      // one account action that exists.
+      showConnectedAccount(health.account ?? null);
       return;
     }
     enterRecheckMode(health.error);
   }
 })();
+
+const PROVIDER_NAMES: Record<string, string> = { "codex": "Codex", "claude-code": "Claude Code" };
+
+function showConnectedAccount(account: { provider: string; label?: string; plan?: string } | null): void {
+  connectTitle.textContent = "Browser Guide is connected";
+  connectSubtitle.textContent = "Everything on this page is done. Open the side panel on any tab to use it.";
+  connectButton.hidden = true;
+  accountBlock.hidden = false;
+  if (account) {
+    accountName.textContent = account.label ?? PROVIDER_NAMES[account.provider] ?? account.provider;
+    accountPlan.textContent = account.plan ? ` · ${account.plan}` : "";
+    accountNote.textContent = "The sign-in is stored on this Mac, so every Chrome profile here shares it.";
+  } else {
+    accountName.textContent = "Connected";
+    accountPlan.textContent = "";
+    accountNote.textContent = "An API key is configured on this Mac.";
+  }
+}
+
+openGuideButton.addEventListener("click", () => {
+  window.location.href = GUIDE_URL;
+});
+
+disconnectButton.addEventListener("click", () => {
+  if (!window.confirm("Disconnect the stored credential from this Mac? The harness sign-in it came from is untouched.")) return;
+  disconnectButton.disabled = true;
+  void runtimeSend<unknown>({ type: "GUIDE_HOST_FORGET_KEY" }).then((response) => {
+    if (isRecord(response) && response.ok === true) {
+      accountBlock.hidden = true;
+      connectTitle.textContent = "Disconnected";
+      connectSubtitle.textContent = "Open the Browser Guide side panel to connect a sign-in again.";
+      return;
+    }
+    disconnectButton.disabled = false;
+    accountNote.textContent = "The credential could not be removed. Try again.";
+  }).catch(() => {
+    disconnectButton.disabled = false;
+    accountNote.textContent = "The credential could not be removed. Try again.";
+  });
+});
 
 connectButton.addEventListener("click", () => {
   permissionStatus.textContent = "";
@@ -237,15 +286,17 @@ async function missingPermissions(declared: string[]): Promise<string[]> {
   return gaps;
 }
 
-async function helperHealth(): Promise<{ ok: true } | { ok: false; error: string }> {
+interface WizardAccount { provider: string; label?: string; plan?: string }
+
+async function helperHealth(): Promise<{ ok: true; account: WizardAccount | null } | { ok: false; error: string }> {
   try {
     const response = await withDeadline(runtimeSend<unknown>({ type: "GUIDE_HOST_HEALTH" }), 10_000);
-    if (isHostHealthResponse(response) && response.ok) return { ok: true };
+    if (isHostHealthResponse(response) && response.ok) return { ok: true, account: response.health.account ?? null };
     const code = isRecord(response) && typeof response.code === "string" ? response.code : "";
     // Key-related states still prove the helper is reachable; the side panel
     // asks for the key when it is needed.
     if (code === "NOT_CONFIGURED" || code === "INVALID_API_KEY" || code === "SECURE_STORAGE_ERROR") {
-      return { ok: true };
+      return { ok: true, account: null };
     }
     const message = isRecord(response) && typeof response.error === "string"
       ? response.error.slice(0, 300)
