@@ -49,7 +49,7 @@ public enum HostRequestPayload: Sendable, Equatable {
     case memoryAppend(origin: String, question: String, answer: String)
     case memoryClear(origin: String?)
     case publishEvidence(origin: String, title: String, evidence: String)
-    case transcribe(wavData: Data, locale: String?)
+    case transcribe(wavData: Data, locale: String?, locales: [String])
     case complete(messagesData: Data)
 }
 
@@ -203,7 +203,7 @@ public enum HostProtocolCodec {
             let payload = try exactPayload(
                 object["payload"],
                 keys: ["audio", "format"],
-                optionalKeys: ["locale"],
+                optionalKeys: ["locale", "locales"],
                 requestID: requestID
             )
             guard payload["format"] as? String == "wav",
@@ -221,7 +221,16 @@ public enum HostProtocolCodec {
                 }
                 locale = tag
             }
-            return HostRequest(requestID: requestID, type: type, payload: .transcribe(wavData: wavData, locale: locale))
+            var locales: [String] = []
+            if let requestedList = payload["locales"] {
+                guard let tags = requestedList as? [String],
+                      tags.count >= 1, tags.count <= 5,
+                      tags.allSatisfy(isBCP47Locale) else {
+                    throw invalid("The transcription payload is invalid.", requestID: requestID)
+                }
+                locales = tags
+            }
+            return HostRequest(requestID: requestID, type: type, payload: .transcribe(wavData: wavData, locale: locale, locales: locales))
 
         case .complete:
             let payload = try exactPayload(object["payload"], keys: ["messages"], requestID: requestID)

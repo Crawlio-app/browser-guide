@@ -410,14 +410,17 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
     public func storedAccount() -> CredentialAccount? {
         guard let store = try? loadStore() else { return nil }
         if let openai = store["openai"] as? [String: Any], openai["key"] is String {
-            guard openai["source"] as? String == "codex-cli" else {
-                return CredentialAccount(provider: .codex, label: nil, plan: nil)
+            // A pasted key is not a Codex sign-in, and claiming it is puts a
+            // false name in the panel. Fall through: if a Claude sign-in also
+            // exists it is the one identity we can truthfully show, and if
+            // nothing does, no chip beats a wrong one.
+            if openai["source"] as? String == "codex-cli" {
+                return CredentialAccount(
+                    provider: .codex,
+                    label: openai["label"] as? String,
+                    plan: openai["plan"] as? String
+                )
             }
-            return CredentialAccount(
-                provider: .codex,
-                label: openai["label"] as? String,
-                plan: openai["plan"] as? String
-            )
         }
         guard let anthropic = store["anthropic"] as? [String: Any], anthropic["access"] is String else { return nil }
         return CredentialAccount(

@@ -227,8 +227,9 @@ export class FileCredentialStore {
     }
     if (!store) return null;
     const openai = store.openai;
-    if (openai && typeof openai.key === "string") {
-      if (openai.source !== "codex-cli") return { provider: "codex" };
+    if (openai && typeof openai.key === "string" && openai.source === "codex-cli") {
+      // A pasted key is not a Codex sign-in; falling through lets a Claude
+      // sign-in show truthfully, and no chip beats a wrong one.
       return trimAccount({ provider: "codex", label: openai.label, plan: openai.plan });
     }
     const anthropic = store.anthropic;

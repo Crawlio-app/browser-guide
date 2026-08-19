@@ -142,6 +142,22 @@ describe("native messaging protocol", () => {
     expect(health({ provider: "codex", expiresAt: "soon" })).toBe(false);
   });
 
+  it("carries the speaker's language candidates, bounded, on transcribe", () => {
+    const wav = "UklGR" + "A".repeat(60);
+    const request = (payload: Record<string, unknown>) => isNativeHostRequest({
+      version: 1, requestId, type: "HOST_TRANSCRIBE", payload: { audio: wav, format: "wav", ...payload },
+    });
+    expect(request({})).toBe(true);
+    expect(request({ locale: "es-MX" })).toBe(true);
+    expect(request({ locales: ["es-MX", "en-US"] })).toBe(true);
+    expect(request({ locale: "es-MX", locales: ["es-MX", "en"] })).toBe(true);
+
+    expect(request({ locales: [] })).toBe(false);
+    expect(request({ locales: ["not a tag!"] })).toBe(false);
+    expect(request({ locales: ["en", "es", "fr", "de", "it", "pt"] })).toBe(false);
+    expect(request({ locales: "es-MX" })).toBe(false);
+  });
+
   it("bounds the credential-source answer the setup screen leads with", () => {
     const sources = (value: unknown) => isHostCredentialSourcesResponse({ ok: true, sources: value });
     expect(sources([])).toBe(true);

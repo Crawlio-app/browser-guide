@@ -70,7 +70,7 @@ export type NativeHostRequest =
   | { version: 1; requestId: string; type: "HOST_MEMORY_CLEAR"; payload?: { origin: string } }
   | { version: 1; requestId: string; type: "HOST_PUBLISH_EVIDENCE"; payload: { origin: string; title: string; evidence: string } }
   | { version: 1; requestId: string; type: "HOST_CLEAR_EVIDENCE" }
-  | { version: 1; requestId: string; type: "HOST_TRANSCRIBE"; payload: { audio: string; format: "wav"; locale?: string } }
+  | { version: 1; requestId: string; type: "HOST_TRANSCRIBE"; payload: { audio: string; format: "wav"; locale?: string; locales?: string[] } }
   | { version: 1; requestId: string; type: "HOST_COMPLETE"; payload: { messages: CompletionMessage[] } };
 
 export interface CompletionTextBlock {
@@ -257,7 +257,7 @@ export type HostBridgeRequest =
   | { type: "GUIDE_HOST_MEMORY_CLEAR"; origin?: string }
   | { type: "GUIDE_HOST_PUBLISH_EVIDENCE"; origin: string; title: string; evidence: string }
   | { type: "GUIDE_HOST_CLEAR_EVIDENCE" }
-  | { type: "GUIDE_HOST_TRANSCRIBE"; audio: string; format: "wav"; locale?: string }
+  | { type: "GUIDE_HOST_TRANSCRIBE"; audio: string; format: "wav"; locale?: string; locales?: string[] }
   | { type: "GUIDE_HOST_COMPLETE"; messages: CompletionMessage[] }
   | { type: "GUIDE_HOST_DISCONNECT" };
 
@@ -409,10 +409,11 @@ export function isHostBridgeRequest(value: unknown): value is HostBridgeRequest 
     case "GUIDE_HOST_CLEAR_EVIDENCE":
       return hasExactKeys(value, ["type"]);
     case "GUIDE_HOST_TRANSCRIBE":
-      return hasExactKeys(value, ["type", "audio", "format"], ["locale"])
+      return hasExactKeys(value, ["type", "audio", "format"], ["locale", "locales"])
         && value.format === "wav"
         && isTranscribeAudio(value.audio)
-        && (value.locale === undefined || isBcp47Locale(value.locale));
+        && (value.locale === undefined || isBcp47Locale(value.locale))
+        && (value.locales === undefined || isLocaleList(value.locales));
     case "GUIDE_HOST_COMPLETE":
       return hasExactKeys(value, ["type", "messages"])
         && isCompletionMessages(value.messages);
@@ -478,10 +479,11 @@ export function isNativeHostRequest(value: unknown): value is NativeHostRequest 
     case "HOST_TRANSCRIBE":
       return hasExactKeys(value, ["version", "requestId", "type", "payload"])
         && isRecord(value.payload)
-        && hasExactKeys(value.payload, ["audio", "format"], ["locale"])
+        && hasExactKeys(value.payload, ["audio", "format"], ["locale", "locales"])
         && value.payload.format === "wav"
         && isTranscribeAudio(value.payload.audio)
-        && (value.payload.locale === undefined || isBcp47Locale(value.payload.locale));
+        && (value.payload.locale === undefined || isBcp47Locale(value.payload.locale))
+        && (value.payload.locales === undefined || isLocaleList(value.payload.locales));
     case "HOST_COMPLETE":
       return hasExactKeys(value, ["version", "requestId", "type", "payload"])
         && isRecord(value.payload)
@@ -639,6 +641,15 @@ export function isNativeCredentialSourcesData(value: unknown): value is NativeCr
  */
 function isBcp47Locale(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/.test(value);
+}
+
+/**
+ * The languages a speaker might have used, in preference order. Bounded so a
+ * request cannot smuggle an unbounded array across the port; the recogniser
+ * races these and keeps the transcript it is most confident in.
+ */
+function isLocaleList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 5 && value.every(isBcp47Locale);
 }
 
 function isAccountText(value: unknown, max: number): value is string {

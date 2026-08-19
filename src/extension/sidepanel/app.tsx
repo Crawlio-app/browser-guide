@@ -144,14 +144,16 @@ class RuntimeCompletionBroker implements CompletionBroker {
   }
 
   async transcribe(wavBase64: string): Promise<string> {
-    // The recogniser needs to be told what language to expect. Left to its
-    // default it assumes US English, so a question asked in any other language
-    // comes back as plausible-looking nonsense, or as nothing at all.
+    // Every language this person might have spoken, in preference order. The
+    // recogniser races them and keeps the transcript it is most confident in,
+    // so a Spanish question on an English-configured Chrome still lands.
+    const candidates = spokenLocales();
     const response = await runtimeSend<unknown>({
       type: "GUIDE_HOST_TRANSCRIBE",
       audio: wavBase64,
       format: "wav",
-      ...(spokenLocale() ? { locale: spokenLocale() } : {}),
+      ...(candidates[0] ? { locale: candidates[0] } : {}),
+      ...(candidates.length > 0 ? { locales: candidates } : {}),
     });
     if (!isHostTranscribeResponse(response) || !response.ok) {
       const code = isRecord(response) && typeof response.code === "string" ? response.code : "INVALID_RESPONSE";
@@ -1846,13 +1848,28 @@ const SIGN_IN_POLL_INTERVAL_MS = 2_000;
 const SIGN_IN_POLL_ATTEMPTS = 150;
 
 /**
- * The language to transcribe in: what this browser is set to. It is the best
- * signal available without asking, and it is right far more often than the
- * hardcoded US English it replaces.
+ * The languages this person plausibly speaks: the browser's full preference
+ * list, not just its first entry. Chrome set to English does not mean the
+ * question was asked in English, and the browser already knows what else the
+ * person reads. Bounded to three; the recogniser races them by confidence.
  */
-function spokenLocale(): string | undefined {
-  const tag = navigator.language?.trim();
-  return tag && /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/.test(tag) ? tag : undefined;
+function spokenLocales(): string[] {
+  const tags = Array.isArray(navigator.languages) && navigator.languages.length > 0
+    ? [...navigator.languages]
+    : [navigator.language];
+  const valid = tags
+    .map((tag) => tag?.trim())
+    .filter((tag): tag is string => Boolean(tag) && /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/.test(tag as string));
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const tag of valid) {
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(tag);
+    if (unique.length === 3) break;
+  }
+  return unique;
 }
 
 /** WAV bytes to base64, in chunks so a long recording cannot blow the stack. */

@@ -176,14 +176,19 @@ export function decodeRequest(data) {
     }
 
     case "HOST_TRANSCRIBE": {
-      const payload = exactPayload(object.payload, ["audio", "format"], requestId, ["locale"]);
+      const payload = exactPayload(object.payload, ["audio", "format"], requestId, ["locale", "locales"]);
       if (payload.format !== "wav"
         || typeof payload.audio !== "string"
         || payload.audio.length > MAX_TRANSCRIBE_AUDIO_B64_CHARS) {
         throw invalid("The transcription payload is invalid.", requestId);
       }
-      if (payload.locale !== undefined
-        && (typeof payload.locale !== "string" || !/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/.test(payload.locale))) {
+      const isTag = (tag) => typeof tag === "string" && /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/.test(tag);
+      if (payload.locale !== undefined && !isTag(payload.locale)) {
+        throw invalid("The transcription payload is invalid.", requestId);
+      }
+      if (payload.locales !== undefined
+        && (!Array.isArray(payload.locales) || payload.locales.length < 1 || payload.locales.length > 5
+          || !payload.locales.every(isTag))) {
         throw invalid("The transcription payload is invalid.", requestId);
       }
       const wav = Buffer.from(payload.audio, "base64");

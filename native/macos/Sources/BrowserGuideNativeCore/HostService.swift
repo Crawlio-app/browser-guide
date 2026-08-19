@@ -157,12 +157,16 @@ public struct BrowserGuideHostService: Sendable {
             evidence?.clear()
             return ["cleared": true]
 
-        case .transcribe(let wavData, let locale) where request.type == .transcribe:
+        case .transcribe(let wavData, let locale, let locales) where request.type == .transcribe:
             guard let transcriber else { throw engineUnavailable(request) }
             do {
+                // The list is the real signal; the single field is what an
+                // older panel sends and joins the front of the race.
+                var candidates = locales
+                if let locale, !candidates.contains(locale) { candidates.insert(locale, at: 0) }
                 return ["transcript": try await transcriber.transcribe(
                     wavData: wavData,
-                    locale: locale.map { Locale(identifier: $0) }
+                    locales: candidates.map { Locale(identifier: $0) }
                 )]
             } catch let error as SpeechTranscriberError {
                 throw mapTranscriberError(error, requestID: request.requestID)

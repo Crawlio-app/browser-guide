@@ -115,7 +115,7 @@ final class HostProtocolTests: XCTestCase {
             "type": "HOST_TRANSCRIBE",
             "payload": ["audio": wav.base64EncodedString(), "format": "wav"],
         ])
-        XCTAssertEqual(decoded, HostRequest(requestID: requestID, type: .transcribe, payload: .transcribe(wavData: wav, locale: nil)))
+        XCTAssertEqual(decoded, HostRequest(requestID: requestID, type: .transcribe, payload: .transcribe(wavData: wav, locale: nil, locales: [])))
 
         // A helper that predates the locale field still accepts the request
         // without one, and a helper that has it accepts a language tag.
@@ -125,7 +125,22 @@ final class HostProtocolTests: XCTestCase {
             "type": "HOST_TRANSCRIBE",
             "payload": ["audio": wav.base64EncodedString(), "format": "wav", "locale": "es-MX"],
         ])
-        XCTAssertEqual(localized, HostRequest(requestID: requestID, type: .transcribe, payload: .transcribe(wavData: wav, locale: "es-MX")))
+        XCTAssertEqual(localized, HostRequest(requestID: requestID, type: .transcribe, payload: .transcribe(wavData: wav, locale: "es-MX", locales: [])))
+
+        // The full preference list rides along and is bounded.
+        let raced = try decode([
+            "version": 1,
+            "requestId": requestID,
+            "type": "HOST_TRANSCRIBE",
+            "payload": ["audio": wav.base64EncodedString(), "format": "wav", "locales": ["en-US", "es-MX"]],
+        ])
+        XCTAssertEqual(raced, HostRequest(requestID: requestID, type: .transcribe, payload: .transcribe(wavData: wav, locale: nil, locales: ["en-US", "es-MX"])))
+        XCTAssertThrowsError(try decode([
+            "version": 1,
+            "requestId": requestID,
+            "type": "HOST_TRANSCRIBE",
+            "payload": ["audio": wav.base64EncodedString(), "format": "wav", "locales": ["a", "b", "c", "d", "e", "f"]],
+        ]))
 
         // Anything that is not a language tag is still rejected outright.
         XCTAssertThrowsError(try decode([
