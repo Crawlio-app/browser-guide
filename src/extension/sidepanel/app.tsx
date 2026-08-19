@@ -202,6 +202,8 @@ function BrowserGuideApp(): React.ReactElement {
   const [engine, setEngine] = useState<GuideEngine>("realtime");
   /** Null until asked, and after a helper too old to answer: both mean "show every option". */
   const [sources, setSources] = useState<NativeCredentialSource[] | null>(null);
+  /** The sign-in we sent someone off to make, while we watch for it to appear. */
+  const [awaiting, setAwaiting] = useState<CredentialProvider | null>(null);
   /**
    * Bumped by sign-out. Anything that was already in flight compares the epoch
    * it started with before writing state, so a late answer cannot revive a
@@ -956,8 +958,85 @@ function BrowserGuideApp(): React.ReactElement {
   // the Keychain read this costs on macOS never runs on a normal panel open.
   useEffect(() => {
     if (setup !== "key-missing" || sources !== null) return;
-    void loadCredentialSources();
+    let cancelled = false;
+    let timer = 0;
+    // One failed answer used to leave the panel on the every-option fallback
+    // for good, because nothing asked again. The helper is briefly unreachable
+    // while Chrome settles after an install, which is exactly when someone is
+    // most likely to be looking at this screen.
+    const attempt = (index: number): void => {
+      if (cancelled) return;
+      void loadCredentialSources().then(() => {
+        if (cancelled || index >= UNREACHABLE_RETRY_DELAYS_MS.length) return;
+        timer = window.setTimeout(() => attempt(index + 1), UNREACHABLE_RETRY_DELAYS_MS[index]);
+      });
+    };
+    attempt(0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [loadCredentialSources, setup, sources]);
+
+  // While someone is signing in elsewhere, watch for the credential to appear
+  // and import it the moment it does. Claude's own panel does exactly this,
+  // at this cadence, rather than making anyone come back and press a button.
+  useEffect(() => {
+    if (!awaiting || setup !== "key-missing") return;
+    const epoch = authEpoch.current;
+    let attempts = 0;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      if (cancelled || epoch !== authEpoch.current) return;
+      attempts += 1;
+      if (attempts > SIGN_IN_POLL_ATTEMPTS) {
+        // Five minutes is long enough that continuing would be watching an
+        // abandoned window. The options are still on screen underneath.
+        setAwaiting(null);
+        return;
+      }
+      void loadCredentialSources();
+    }, SIGN_IN_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [awaiting, loadCredentialSources, setup]);
+
+  // The watch ends the moment the sign-in it was waiting for shows up.
+  useEffect(() => {
+    if (!awaiting || keyBusy) return;
+    const found = sources?.find((source) => source.provider === awaiting && source.available);
+    if (!found) return;
+    setAwaiting(null);
+    void importCredentialsRef.current(awaiting);
+  }, [awaiting, keyBusy, sources]);
+
+  /**
+   * Send someone to make the sign-in, then watch for it, which is the shape
+   * the Codex extension uses: its only sign-in action opens the local app and
+   * lets that app own the login. We cannot run an OAuth flow of our own
+   * without registering as somebody else, and we do not need to: the real
+   * tools already do it properly, and the credential lands in a file we can
+   * see.
+   */
+  const beginSignIn = useCallback((provider: CredentialProvider) => {
+    setIssue(null);
+    if (provider === "codex") {
+      // Chrome hands the scheme to macOS and asks first. Deliberately not a
+      // synthetic anchor click: this bundle is checked for the absence of
+      // element clicks, and that check is load-bearing for the read-only
+      // guarantee, so it should never be relaxed for a convenience.
+      window.open(CODEX_LAUNCH_URL, "_blank", "noopener");
+    }
+    // Claude Code's sign-in is made by running the CLI, so the waiting panel
+    // shows that command rather than pretending a URL can create it.
+    setAwaiting(provider);
+  }, []);
+
+  const cancelSignInWait = useCallback(() => {
+    setAwaiting(null);
+  }, []);
 
   const importCredentials = useCallback(async (provider: CredentialProvider) => {
     if (keyBusy) return;
@@ -1003,6 +1082,11 @@ function BrowserGuideApp(): React.ReactElement {
       setKeyBusy(false);
     }
   }, [keyBusy, loadCredentialSources]);
+
+  // The watcher effect above runs before this is declared, and re-creating it
+  // on every render would restart the poll; a ref keeps both stable.
+  const importCredentialsRef = useRef(importCredentials);
+  importCredentialsRef.current = importCredentials;
 
   const configureApiKey = useCallback(async () => {
     if (keyBusy) return;
@@ -1323,6 +1407,9 @@ function BrowserGuideApp(): React.ReactElement {
           keyBusy={keyBusy}
           keyPresent={keyPresent}
           sources={sources}
+          awaiting={awaiting}
+          onBeginSignIn={beginSignIn}
+          onCancelWait={cancelSignInWait}
           keyInput={transientKeyInput}
           onKeyPresent={setKeyPresent}
           onConfigureKey={configureApiKey}
@@ -1605,6 +1692,9 @@ interface SetupViewProps {
   keyBusy: boolean;
   keyPresent: boolean;
   sources: NativeCredentialSource[] | null;
+  awaiting: CredentialProvider | null;
+  onBeginSignIn(provider: CredentialProvider): void;
+  onCancelWait(): void;
   keyInput: React.RefObject<HTMLInputElement | null>;
   onKeyPresent(value: boolean): void;
   onConfigureKey(): Promise<void>;
@@ -1656,6 +1746,12 @@ function expiryNotice(account: NativeAccountIdentity | null): string | null {
 
 const INSTALL_COMMAND = "npx crawlio-browser-guide init";
 const OPENAI_KEYS_URL = "https://platform.openai.com/api-keys";
+/** Opens the local ChatGPT app, which is the only sign-in action the Codex extension has. */
+const CODEX_LAUNCH_URL = "codex://launch";
+const CLAUDE_LOGIN_COMMAND = "claude";
+/** Claude's own panel polls at this cadence while a login is in progress. */
+const SIGN_IN_POLL_INTERVAL_MS = 2_000;
+const SIGN_IN_POLL_ATTEMPTS = 150;
 
 /**
  * The language to transcribe in: what this browser is set to. It is the best
@@ -1676,24 +1772,32 @@ function base64FromBytes(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function InstallCommandRow(): React.ReactElement {
+/** One command, copyable. Used for installing the helper and for the Claude
+ *  Code sign-in, which is made by running the CLI rather than opening a URL. */
+function CommandRow({ command }: { command: string }): React.ReactElement {
   const [copied, setCopied] = useState(false);
+  return (
+    <div className="command-row">
+      <code>{command}</code>
+      <button
+        type="button"
+        aria-label={`Copy the command ${command}`}
+        onClick={() => {
+          void navigator.clipboard.writeText(command).then(() => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 2_000);
+          }).catch(() => undefined);
+        }}
+      >{copied ? "Copied" : "Copy"}</button>
+    </div>
+  );
+}
+
+function InstallCommandRow(): React.ReactElement {
   return (
     <div className="install-command">
       <p>Install the local helper with one command, then press Check again:</p>
-      <div className="command-row">
-        <code>{INSTALL_COMMAND}</code>
-        <button
-          type="button"
-          aria-label="Copy the install command"
-          onClick={() => {
-            void navigator.clipboard.writeText(INSTALL_COMMAND).then(() => {
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 2_000);
-            }).catch(() => undefined);
-          }}
-        >{copied ? "Copied" : "Copy"}</button>
-      </div>
+      <CommandRow command={INSTALL_COMMAND} />
     </div>
   );
 }
@@ -1758,6 +1862,30 @@ function RecordingBar(props: {
  */
 function SignInOptions(props: SetupViewProps): React.ReactElement {
   const [keyOpen, setKeyOpen] = useState(false);
+
+  // While a sign-in is being made elsewhere, this is the whole screen: the
+  // options underneath would invite a second, competing attempt.
+  if (props.awaiting) {
+    return (
+      <div className="signin-waiting" role="status">
+        <p className="signin-waiting-title">Waiting for your {providerName(props.awaiting)} sign-in</p>
+        {props.awaiting === "codex" ? (
+          <p className="signin-empty">
+            Finish signing in to ChatGPT, and Browser Guide will pick it up on its own. Nothing to come back and click.
+          </p>
+        ) : (
+          <>
+            <p className="signin-empty">
+              Run this in a terminal and sign in. Browser Guide will pick it up on its own.
+            </p>
+            <CommandRow command={CLAUDE_LOGIN_COMMAND} />
+          </>
+        )}
+        <button type="button" className="setup-secondary" onClick={props.onCancelWait}>Cancel</button>
+      </div>
+    );
+  }
+
   const known = props.sources !== null;
   const buttons: Array<{ provider: CredentialProvider; label?: string }> = known
     ? (props.sources ?? []).filter((source) => source.available)
@@ -1792,12 +1920,24 @@ function SignInOptions(props: SetupViewProps): React.ReactElement {
           No harness sign-in was found on this computer. Sign in to Codex or Claude Code, then check again, or paste a key below.
         </p>
       )}
-      {missing.length > 0 && buttons.length > 0 && (
-        <ul className="signin-absent">
+      {missing.length > 0 && (
+        <div className="signin-missing">
           {missing.map((source) => (
-            <li key={source.provider}>{providerName(source.provider)}: {source.detail ?? "not found on this computer"}</li>
+            <div className="signin-missing-row" key={source.provider}>
+              <p>{providerName(source.provider)}: {source.detail ?? "not found on this computer"}</p>
+              <button
+                type="button"
+                className={buttons.length === 0 && source.provider === missing[0]?.provider
+                  ? "signin-button primary"
+                  : "signin-button"}
+                disabled={props.keyBusy}
+                onClick={() => props.onBeginSignIn(source.provider)}
+              >
+                <span>Sign in to {providerName(source.provider)}</span>
+              </button>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
 
       {keyOpen ? (

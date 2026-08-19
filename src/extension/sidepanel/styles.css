@@ -299,6 +299,39 @@ input:disabled {
   background: var(--accent-tint);
 }
 
+.signin-missing {
+  display: grid;
+  gap: 12px;
+}
+
+.signin-missing-row {
+  display: grid;
+  gap: 6px;
+}
+
+.signin-missing-row p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+/* Waiting takes the whole card: leaving the other routes visible invites a
+   second, competing sign-in attempt. */
+.signin-waiting {
+  display: grid;
+  gap: 12px;
+  text-align: left;
+}
+
+.signin-waiting-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .signin-empty {
   margin: 0;
   color: var(--text-body);

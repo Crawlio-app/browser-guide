@@ -32,6 +32,8 @@ process.stdin.on("end", () => {
 });
 
 const memoryNotes = new Map();
+let sourcePolls = 0;
+let importedOpenAI = false;
 
 function respond(request) {
   const base = { version: 1, requestId: request.requestId, ok: true };
@@ -42,7 +44,7 @@ function respond(request) {
       // rebuilt without reinstalling the helper.
       const health = {
         ready: true,
-        configured: process.env.BROWSER_GUIDE_TEST_OPENAI !== "0",
+        configured: importedOpenAI || process.env.BROWSER_GUIDE_TEST_OPENAI !== "0",
         model: "gpt-realtime",
       };
       if (process.env.BROWSER_GUIDE_TEST_LEGACY_HEALTH !== "1") {
@@ -51,6 +53,22 @@ function respond(request) {
         else if (health.claude) health.account = { provider: "claude-code", plan: "max" };
       }
       write({ ...base, data: health });
+      break;
+    }
+    case "HOST_IMPORT_CREDENTIALS": {
+      // Importing a Codex sign-in yields a key, so the panel goes ready on the
+      // Realtime engine; a Claude sign-in yields tokens and no OpenAI key.
+      const provider = request.payload?.provider;
+      importedOpenAI = importedOpenAI || provider === "codex";
+      write({ ...base, data: {
+        imported: true,
+        provider,
+        method: provider === "codex" ? "api_key" : "oauth",
+        configured: importedOpenAI,
+        account: provider === "codex"
+          ? { provider: "codex", label: "tester@example.test", plan: "plus" }
+          : { provider: "claude-code", plan: "max" },
+      } });
       break;
     }
     case "HOST_CREDENTIAL_SOURCES":
@@ -65,10 +83,20 @@ function respond(request) {
         });
         break;
       }
-      write({ ...base, data: { sources: [
-        { provider: "codex", available: true, label: "tester@example.test", plan: "plus" },
-        { provider: "claude-code", available: false, detail: "Sign in to Claude Code to create one." },
-      ] } });
+      {
+        // BROWSER_GUIDE_TEST_SIGNIN_AFTER reproduces someone signing in
+        // elsewhere: Codex is absent until that many polls have gone by, then
+        // it appears, exactly as it would once a real login finished.
+        const appearAfter = Number(process.env.BROWSER_GUIDE_TEST_SIGNIN_AFTER ?? "0");
+        sourcePolls += 1;
+        const codexPresent = appearAfter === 0 || sourcePolls > appearAfter;
+        write({ ...base, data: { sources: [
+          codexPresent
+            ? { provider: "codex", available: true, label: "tester@example.test", plan: "plus" }
+            : { provider: "codex", available: false, detail: "Run `codex login` to create one." },
+          { provider: "claude-code", available: false, detail: "Sign in to Claude Code to create one." },
+        ] } });
+      }
       break;
     case "HOST_CREATE_SESSION":
       write({ ...base, data: { answerSdp: "v=0\r\ns=browser-guide-controlled-answer\r\n", upstreamRequestId: "req_e2e" } });

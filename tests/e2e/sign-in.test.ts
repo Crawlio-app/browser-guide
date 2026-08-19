@@ -108,17 +108,24 @@ describe.skipIf(!existsSync(chromiumPath))("sign-in surface", () => {
     const panel = await openPanel("stub");
     await expect.poll(() => setupTitle(panel), { timeout: 15_000 }).toBe("Connect your sign-in");
 
-    // One primary route, named, carrying the account it belongs to.
+    // One primary route, named, carrying the account it belongs to. The
+    // second button is the launch action for the sign-in that is absent.
     const buttons = panel.locator(".signin-button");
-    await expect.poll(() => buttons.count(), { timeout: 10_000 }).toBe(1);
+    // Poll on the account, not the count: the pre-detection fallback also
+    // shows two buttons, so a count alone cannot tell the states apart.
+    await expect.poll(() => buttons.first().textContent(), { timeout: 15_000 })
+      .toContain("tester@example.test");
+    expect(await buttons.count()).toBe(2);
     const primary = buttons.first();
     expect(await primary.textContent()).toContain("Continue with Codex");
-    expect(await primary.textContent()).toContain("tester@example.test");
     expect(await primary.getAttribute("class")).toContain("primary");
 
-    // What is missing is stated, not silently dropped.
-    expect(await panel.locator(".signin-absent li").allTextContents())
-      .toEqual(["Claude Code: Sign in to Claude Code to create one."]);
+    // What is missing is stated, and is an action rather than a dead end.
+    const missing = panel.locator(".signin-missing-row");
+    expect(await missing.count()).toBe(1);
+    expect(await missing.locator("p").textContent())
+      .toBe("Claude Code: Sign in to Claude Code to create one.");
+    expect(await missing.locator("button").textContent()).toBe("Sign in to Claude Code");
 
     // The API key is an escape hatch, not a peer of the sign-in.
     expect(await panel.locator("#platform-key").count()).toBe(0);
@@ -152,6 +159,38 @@ describe.skipIf(!existsSync(chromiumPath))("sign-in surface", () => {
     // The transport reason for this state only repeats the headline in
     // vocabulary nobody outside this codebase uses, so it stays off screen.
     expect(await panel.locator(".setup-error").count()).toBe(0);
+  }, 90_000);
+
+  it("sends you to the real sign-in and picks it up when it appears", async () => {
+    // No Codex sign-in yet, so the option is a launch rather than a dead end.
+    // It appears after two polls, which is what finishing a real login looks
+    // like from here.
+    const panel = await openPanel("stub", { BROWSER_GUIDE_TEST_SIGNIN_AFTER: "2" });
+    await expect.poll(() => setupTitle(panel), { timeout: 15_000 }).toBe("Connect your sign-in");
+
+    const launch = panel.locator(".signin-missing-row button", { hasText: "Sign in to Codex" });
+    await expect.poll(() => launch.count(), { timeout: 20_000 }).toBe(1);
+    await launch.click();
+
+    // Waiting replaces the options so a second attempt cannot be started, and
+    // nothing has to be pressed once the sign-in exists.
+    await expect.poll(() => panel.locator(".signin-waiting-title").textContent(), { timeout: 10_000 })
+      .toContain("Waiting for your Codex sign-in");
+    await expect.poll(() => panel.locator(".signin-button").count(), { timeout: 5_000 }).toBe(0);
+
+    await expect.poll(() => panel.locator(".instrument-bar").count(), { timeout: 30_000 }).toBe(1);
+    expect(await panel.locator("#setup-title").count()).toBe(0);
+  }, 90_000);
+
+  it("lets a wait be abandoned without losing the other routes", async () => {
+    const panel = await openPanel("stub", { BROWSER_GUIDE_TEST_SIGNIN_AFTER: "999" });
+    await expect.poll(() => setupTitle(panel), { timeout: 15_000 }).toBe("Connect your sign-in");
+    await panel.locator(".signin-missing-row button", { hasText: "Sign in to Codex" }).click();
+    await expect.poll(() => panel.locator(".signin-waiting-title").count(), { timeout: 10_000 }).toBe(1);
+
+    await panel.locator(".setup-secondary", { hasText: "Cancel" }).click();
+    await expect.poll(() => panel.locator(".signin-waiting-title").count(), { timeout: 5_000 }).toBe(0);
+    expect(await panel.locator(".signin-missing-row button").count()).toBeGreaterThan(0);
   }, 90_000);
 
   it("reaches sign-in even when the panel opens into the install itself", async () => {
