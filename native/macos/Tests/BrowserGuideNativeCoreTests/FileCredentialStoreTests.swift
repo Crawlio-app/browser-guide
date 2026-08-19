@@ -113,6 +113,39 @@ final class FileCredentialStoreTests: XCTestCase {
         XCTAssertEqual(store.storedAccount()?.expiresAt, yearFromNow)
     }
 
+    func testALapsedSignInIsNotReportedAsUsable() throws {
+        // Our copy of a sign-in outlives the sign-in. Answering "connected" on
+        // a dead one puts the panel in a ready state that fails on the first
+        // question, and shows an account chip for someone who is signed out.
+        let claudeDirectory = temporaryRoot.appendingPathComponent(".claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: claudeDirectory, withIntermediateDirectories: true)
+        let longAgo = Date(timeIntervalSince1970: 1_600_000_000).timeIntervalSince1970 * 1_000
+        let farFuture = Date().addingTimeInterval(365 * 86_400).timeIntervalSince1970 * 1_000
+        let credentialsURL = claudeDirectory.appendingPathComponent(".credentials.json")
+
+        try JSONSerialization.data(withJSONObject: ["claudeAiOauth": [
+            "accessToken": "sk-ant-oat-token",
+            "refreshToken": "sk-ant-ort-token",
+            "subscriptionType": "max",
+            "refreshTokenExpiresAt": longAgo,
+        ]]).write(to: credentialsURL)
+        let store = makeStore()
+        _ = try store.importCredentials(from: .claudeCode)
+        XCTAssertFalse(store.hasAnthropicCredential(now: Date()))
+
+        // A live refresh window is usable even though the access token itself
+        // turns over hourly and may well be stale right now.
+        try JSONSerialization.data(withJSONObject: ["claudeAiOauth": [
+            "accessToken": "sk-ant-oat-token",
+            "refreshToken": "sk-ant-ort-token",
+            "subscriptionType": "max",
+            "expiresAt": longAgo,
+            "refreshTokenExpiresAt": farFuture,
+        ]]).write(to: credentialsURL)
+        _ = try store.importCredentials(from: .claudeCode)
+        XCTAssertTrue(store.hasAnthropicCredential(now: Date()))
+    }
+
     func testAvailableSourcesReportWhatThisComputerActuallyHas() throws {
         let store = makeStore()
         let empty = store.availableSources()

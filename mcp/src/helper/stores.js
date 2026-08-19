@@ -287,9 +287,20 @@ export class FileCredentialStore {
     return sourceFrom(claudeAccount(oauth), true);
   }
 
-  hasAnthropicCredential() {
+  /** Whether the stored Claude sign-in can still be used.
+   *
+   *  Presence is not enough: our copy outlives the sign-in itself, so a
+   *  lapsed one still looks connected and the panel goes ready on it. The
+   *  access token is not the test, because it turns over hourly and is
+   *  re-synced on demand; the refresh window closing is, because no re-read
+   *  can reopen it. */
+  hasAnthropicCredential(nowMs = Date.now()) {
     try {
-      return typeof this.#load()?.anthropic?.access === "string";
+      const anthropic = this.#load()?.anthropic;
+      if (typeof anthropic?.access !== "string") return false;
+      const signInExpires = anthropic.signInExpires;
+      if (typeof signInExpires !== "number" || signInExpires <= 0) return true;
+      return nowMs < signInExpires;
     } catch {
       return false;
     }

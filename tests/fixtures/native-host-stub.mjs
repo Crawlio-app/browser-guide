@@ -48,8 +48,14 @@ function respond(request) {
         model: "gpt-realtime",
       };
       if (process.env.BROWSER_GUIDE_TEST_LEGACY_HEALTH !== "1") {
-        health.claude = process.env.BROWSER_GUIDE_TEST_CLAUDE === "1";
-        if (health.configured) health.account = { provider: "codex", label: "tester@example.test", plan: "plus" };
+        // A lapsed sign-in: still stored, no longer usable. Health must not
+        // claim it works, and the panel must say why rather than showing a
+        // connected account for someone who is signed out.
+        const lapsed = process.env.BROWSER_GUIDE_TEST_CLAUDE_LAPSED === "1";
+        health.claude = !lapsed && process.env.BROWSER_GUIDE_TEST_CLAUDE === "1";
+        if (lapsed) health.account = { provider: "claude-code", plan: "max", expiresAt: 1600000000000 };
+        if (lapsed) { /* the lapsed identity above stands */ }
+        else if (health.configured) health.account = { provider: "codex", label: "tester@example.test", plan: "plus" };
         else if (health.claude) health.account = { provider: "claude-code", plan: "max" };
       }
       write({ ...base, data: health });

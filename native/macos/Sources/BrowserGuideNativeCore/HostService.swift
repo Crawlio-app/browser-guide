@@ -90,7 +90,7 @@ public struct BrowserGuideHostService: Sendable {
             var health: [String: Any] = [
                 "ready": true,
                 "configured": try keyStore.readAPIKey() != nil,
-                "claude": importer?.hasAnthropicCredential() ?? false,
+                "claude": importer?.hasAnthropicCredential(now: Date()) ?? false,
                 "model": BrowserGuideHostConstants.realtimeModel,
             ]
             // Read from the store we already opened, never from the harness

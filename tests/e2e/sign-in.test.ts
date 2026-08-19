@@ -204,6 +204,23 @@ describe.skipIf(!existsSync(chromiumPath))("sign-in surface", () => {
     await expect.poll(() => panel.locator(".signin-button").count(), { timeout: 10_000 }).toBeGreaterThan(0);
   }, 90_000);
 
+  it("does not present a lapsed sign-in as a connected account", async () => {
+    // The stored copy of a sign-in outlives the sign-in itself. Treating
+    // presence as proof put the panel in a ready state, with an account chip,
+    // for someone who was signed out, and the first question was the first
+    // anyone heard of it.
+    const panel = await openPanel("stub", { BROWSER_GUIDE_TEST_CLAUDE: "1", BROWSER_GUIDE_TEST_CLAUDE_LAPSED: "1" });
+    await expect.poll(() => setupTitle(panel), { timeout: 15_000 }).toBe("Connect your sign-in");
+
+    // No ready surface, and no chip claiming an account.
+    expect(await panel.locator(".instrument-bar").count()).toBe(0);
+    expect(await panel.locator(".account-chip").count()).toBe(0);
+
+    // And it says why it is asking, rather than looking like a fresh install.
+    expect(await panel.locator(".setup-note").textContent())
+      .toContain("Claude Code sign-in expired");
+  }, 90_000);
+
   it("does ask for an install when Chrome has no helper registered at all", async () => {
     const panel = await openPanel("absent");
     await expect.poll(() => setupTitle(panel), { timeout: 20_000 }).toBe("Install the helper");

@@ -1407,6 +1407,7 @@ function BrowserGuideApp(): React.ReactElement {
           keyBusy={keyBusy}
           keyPresent={keyPresent}
           sources={sources}
+          account={account}
           awaiting={awaiting}
           onBeginSignIn={beginSignIn}
           onCancelWait={cancelSignInWait}
@@ -1692,6 +1693,7 @@ interface SetupViewProps {
   keyBusy: boolean;
   keyPresent: boolean;
   sources: NativeCredentialSource[] | null;
+  account: NativeAccountIdentity | null;
   awaiting: CredentialProvider | null;
   onBeginSignIn(provider: CredentialProvider): void;
   onCancelWait(): void;
@@ -1733,6 +1735,13 @@ function connectedAsTitle(account: NativeAccountIdentity, engine: GuideEngine): 
 
 /** A sign-in is close enough to expiry to be worth mentioning: two weeks. */
 const EXPIRY_NOTICE_MS = 14 * 24 * 60 * 60 * 1_000;
+
+/** The message for a sign-in that has already stopped working, or null. */
+function lapsedSignIn(account: NativeAccountIdentity | null): string | null {
+  if (!account?.expiresAt || account.expiresAt > Date.now()) return null;
+  const source = providerName(account.provider);
+  return `Your ${source} sign-in expired, so Browser Guide cannot use it any more. Sign in to ${source} again and it will be picked up here.`;
+}
 
 function expiryNotice(account: NativeAccountIdentity | null): string | null {
   if (!account?.expiresAt) return null;
@@ -1982,6 +1991,11 @@ function SetupView(props: SetupViewProps): React.ReactElement {
       <p className="setup-kicker">{copy.kicker}</p>
       <h1 id="setup-title">{copy.title}</h1>
       <p className="setup-line">{copy.line}</p>
+      {/* Landing here because a sign-in lapsed is a different situation from
+          never having connected one, and the remedy is different too. */}
+      {props.state === "key-missing" && lapsedSignIn(props.account) && (
+        <p className="setup-note" role="status">{lapsedSignIn(props.account)}</p>
+      )}
 
       {props.state === "key-missing" ? (
         <SignInOptions {...props} />

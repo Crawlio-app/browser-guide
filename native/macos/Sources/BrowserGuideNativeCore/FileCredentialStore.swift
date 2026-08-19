@@ -97,10 +97,11 @@ public protocol CredentialImporting: Sendable {
     /// The stored Claude access token, re-synced from its source when near
     /// expiry. Nil when no Claude sign-in was ever imported.
     func freshAnthropicAccessToken(now: Date) throws -> String?
-    /// Whether an Anthropic credential slot exists in the store at all,
-    /// without any network or freshness work. Powers the health flag that
-    /// selects the Claude engine.
-    func hasAnthropicCredential() -> Bool
+    /// Whether the stored Anthropic sign-in can still be used, judged without
+    /// any network work. Powers the health flag that selects the Claude
+    /// engine, so a stale copy answering yes puts the panel in a ready state
+    /// that fails on the first question.
+    func hasAnthropicCredential(now: Date) -> Bool
 }
 
 /// Harness-style credential storage: one JSON file with 0600 permissions,
@@ -498,8 +499,25 @@ public struct FileCredentialStore: APIKeyStoring, CredentialImporting, Sendable 
         return anthropic["access"] as? String
     }
 
-    public func hasAnthropicCredential() -> Bool {
-        ((try? loadStore())?["anthropic"] as? [String: Any])?["access"] is String
+    /// Whether the stored Claude sign-in can still be used.
+    ///
+    /// Presence is not enough. Our copy of a sign-in outlives the sign-in
+    /// itself: sign out of Claude Code, or simply let the refresh window
+    /// lapse, and this file still holds a token that no longer works. Health
+    /// answered "yes" on that basis, so the panel reported a connected account
+    /// and went ready, and the first question was the first anyone heard of
+    /// it.
+    ///
+    /// The access token is deliberately not the test: it turns over hourly and
+    /// is re-synced from the harness on demand, so judging by it would call a
+    /// working sign-in dead. The refresh window closing is decisive, because
+    /// no re-read can reopen it. Claude Code itself has to sign in again.
+    public func hasAnthropicCredential(now: Date = Date()) -> Bool {
+        guard let anthropic = (try? loadStore())?["anthropic"] as? [String: Any],
+              anthropic["access"] is String else { return false }
+        guard let signInExpires = (anthropic["signInExpires"] as? NSNumber)?.doubleValue,
+              signInExpires > 0 else { return true }
+        return now.timeIntervalSince1970 * 1_000 < signInExpires
     }
 
     public func resyncOpenAICredentialFromSource() -> Bool {
